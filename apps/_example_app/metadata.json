@@ -1,15 +1,15 @@
-{ "id": "7chname",
-  "name": "My app's human readable name",
-  "shortName":"Short Name",
+{ "id": "MyHealth",
+  "name": "My Health App",
+  "shortName":"My Health",
   "version":"0.01",
   "author": "gfwilliams",
-  "description": "A detailed description of my great app",
+  "description": "This is my Health an fittness app",
   "icon": "app.png",
   "tags": "",
   "supports" : ["BANGLEJS2"],
   "readme": "README.md",
   "storage": [
-    {"name":"7chname.app.js","url":"app.js"},
-    {"name":"7chname.img","url":"app-icon.js","evaluate":true}
+    {"name":"MyHealth.app.js","url":"app.js"},
+    {"name":"MyHealth.img","url":"app-icon.js","evaluate":true}
   ]
 }
