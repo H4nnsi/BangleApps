@@ -3,7 +3,7 @@
   "shortName":"MyHealth",
   "version":"0.01",
   "author": "H4nnsi",
-  "description": "A detailed description of my clock",
+  "description": "this is my Health app",
   "icon": "app.png",
   "tags": "",
   "supports" : ["BANGLEJS2"],
