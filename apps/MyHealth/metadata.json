@@ -5,9 +5,7 @@
   "author": "H4nnsi",
   "description": "A detailed description of my clock",
   "icon": "app.png",
-  "screenshots": [{"url":"screenshot.png"}],
-  "type": "health",
-  "tags": "health",
+  "tags": "",
   "supports" : ["BANGLEJS2"],
   "readme": "README.md",
   "storage": [
