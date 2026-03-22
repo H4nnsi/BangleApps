@@ -1,24 +1,37 @@
 const storage = require("Storage");
 
-// --- INITIALISIERUNG & SPEICHER ---
+// --- SETTINGS & PERSISTENZ ---
 let settings = storage.readJSON("myhealth.json", 1) || {
   age: 30,
-  restHR: 60
+  restHR: 60,
+  maxHROverride: 0,
+  buzzOnZone: true,
+  alertTime: 5
 };
+
+// Trainingsdaten (Graph) laden
+let lastSession = storage.readJSON("myhealth_session.json", 1) || {
+  points: [], // Array von {b: bpm, t: zeitRelativ}
+  duration: 0,
+  max: 0,
+  min: 200
+};
+
+let hrHistory = []; // Für den 10min AVG im Dashboard
+let steps = 0;
+let isJogging = false;
+let startTime = 0;
+let currentHR = 0;
+let currentZone = 0;
+let view = "DASHBOARD"; // DASHBOARD, ZONES, GRAPH
+let isMenuOpen = false;
+let zoneAlertTime = 0;
+let zoneAlertVal = 0;
 
 function saveSettings() {
   storage.writeJSON("myhealth.json", settings);
   calculateZones();
 }
-
-// --- VARIABLEN ---
-let currentHR = 0;
-let hrHistory = []; 
-let steps = 0;
-let isJogging = false;
-let currentZone = 0;
-let view = "DASHBOARD"; 
-let isMenuOpen = false;
 
 const ZONE_DEFS = [
   { name: "Aufwaermen", min: 0.50, color: "#00FFFF" },
@@ -31,14 +44,11 @@ const ZONE_DEFS = [
 let calculatedZones = [];
 
 function calculateZones() {
-  let maxHR = 220 - settings.age;
+  let maxHR = settings.maxHROverride > 0 ? settings.maxHROverride : (220 - settings.age);
   let reserve = maxHR - settings.restHR;
   calculatedZones = ZONE_DEFS.map((z, i) => {
     let lower = Math.round((reserve * z.min) + settings.restHR);
-    let upper = (i < 4) 
-      ? Math.round((reserve * ZONE_DEFS[i+1].min) + settings.restHR) - 1 
-      : maxHR;
-    return { name: z.name, minBpm: lower, maxBpm: upper, color: z.color };
+    return { name: z.name, minBpm: lower, color: z.color };
   });
 }
 
@@ -50,6 +60,7 @@ function updateStats(bpm) {
   hrHistory = hrHistory.filter(h => h.time > (now - 10 * 60 * 1000));
 
   if (isJogging) {
+    // Zone berechnen
     let newZone = 0;
     for (let i = calculatedZones.length - 1; i >= 0; i--) {
       if (bpm >= calculatedZones[i].minBpm) {
@@ -57,8 +68,20 @@ function updateStats(bpm) {
         break;
       }
     }
-    if (newZone !== currentZone && currentZone !== 0) Bangle.buzz(500);
+    if (newZone !== currentZone && currentZone !== 0) {
+      if (settings.buzzOnZone) Bangle.buzz(500);
+      zoneAlertTime = now;
+      zoneAlertVal = newZone;
+    }
     currentZone = newZone;
+
+    // Punkt für Graph speichern (alle 10 Sek)
+    if (!lastSession.lastUpdate || now - lastSession.lastUpdate > 10000) {
+      lastSession.points.push(bpm);
+      lastSession.max = Math.max(lastSession.max, bpm);
+      lastSession.min = Math.min(lastSession.min, bpm);
+      lastSession.lastUpdate = now;
+    }
   }
 }
 
@@ -68,128 +91,163 @@ function getAverageHR() {
   return Math.round(sum / hrHistory.length);
 }
 
-// --- EINSTELLUNGEN ---
+// --- GRAPH ZEICHNEN ---
+function drawGraph() {
+  g.setBgColor("#000").clear();
+  const w = g.getWidth();
+  const h = g.getHeight();
+  const pts = lastSession.points;
+  
+  g.setFont("Vector", 16).setColor("#FFF").setFontAlign(0, -1).drawString("TRAININGS-VERLAUF", w/2, 5);
+  
+  if (pts.length < 2) {
+    g.setFont("Vector", 12).drawString("Zu wenig Daten...", w/2, h/2);
+    return;
+  }
 
+  let min = lastSession.min - 5;
+  let max = lastSession.max + 5;
+  let range = max - min;
+  let stepX = (w - 20) / (pts.length - 1);
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    let x1 = 10 + i * stepX;
+    let y1 = (h - 40) - ((pts[i] - min) / range) * (h - 80);
+    let x2 = 10 + (i + 1) * stepX;
+    let y2 = (h - 40) - ((pts[i+1] - min) / range) * (h - 80);
+    
+    // Farbe basierend auf Puls-Zone des Punktes
+    let pCol = "#FFF";
+    for(let zi=calculatedZones.length-1; zi>=0; zi--) {
+      if (pts[i] >= calculatedZones[zi].minBpm) { pCol = calculatedZones[zi].color; break; }
+    }
+    
+    g.setColor(pCol).drawLine(x1, y1, x2, y2);
+  }
+  
+  g.setFont("Vector", 10).setColor("#888").setFontAlign(-1, 1);
+  g.drawString("Min: " + lastSession.min, 10, h-10);
+  g.setFontAlign(1, 1).drawString("Max: " + lastSession.max, w-10, h-10);
+}
+
+// --- SETUP MENÜ ---
 function showSettingsMenu() {
   isMenuOpen = true;
-  let avg = getAverageHR();
-  const menu = {
+  E.showMenu({
     "": { "title": "-- Setup --" },
-    "< Zurueck": () => { isMenuOpen = false; E.showMenu(); view = "DASHBOARD"; render(); },
     "Alter": {
-      value: settings.age,
-      min: 10, max: 99,
+      value: settings.age, min: 10, max: 99,
       onchange: v => { settings.age = v; saveSettings(); }
     },
     "Ruhepuls": {
-      value: settings.restHR,
-      min: 30, max: 120,
+      value: settings.restHR, min: 30, max: 120,
       onchange: v => { settings.restHR = v; saveSettings(); }
     },
-    "Setze AVG als Ruhe-HR": () => {
-      if (avg > 30) {
-        settings.restHR = avg;
-        saveSettings();
-        Bangle.buzz(200);
-        E.showAlert("Ruhe-HR auf " + avg + " gesetzt").then(() => showSettingsMenu());
-      }
+    "Letztes Training": () => { isMenuOpen = false; view = "GRAPH"; E.showMenu(); render(); },
+    "Zonen Liste": () => { isMenuOpen = false; view = "ZONES"; E.showMenu(); render(); },
+    "Vibration": {
+      value: settings.buzzOnZone,
+      onchange: v => { settings.buzzOnZone = v; saveSettings(); }
     },
-    "Zonen anzeigen": () => { isMenuOpen = false; view = "ZONES"; E.showMenu(); render(); }
-  };
-  E.showMenu(menu);
+    "Verlauf loeschen": () => {
+      hrHistory = [];
+      lastSession = { points: [], max: 0, min: 200, duration: 0 };
+      storage.delete("myhealth_session.json");
+      E.showAlert("Geloescht").then(() => showSettingsMenu());
+    }
+  });
 }
 
 // --- RENDERING ---
-
 function render() {
   if (isMenuOpen) return;
   const w = g.getWidth();
   const mid = w / 2;
+  const now = Date.now();
+
+  if (view === "GRAPH") { drawGraph(); return; }
 
   if (view === "ZONES") {
     g.setBgColor("#000").clear();
-    g.setFont("Vector", 18).setColor("#FFF").setFontAlign(0,-1).drawString("DEINE ZONEN", mid, 10);
-    
+    g.setFont("Vector", 18).setColor("#FFF").setFontAlign(0,-1).drawString("ZONEN", mid, 5);
     calculatedZones.forEach((z, i) => {
-      let y = 38 + (i * 26);
-      g.setColor(z.color).fillRect(10, y, 35, y+20);
-      g.setColor("#000").setFont("Vector", 14).setFontAlign(0,0).drawString(i+1, 23, y+11);
-      g.setFont("Vector", 12).setColor("#FFF").setFontAlign(-1,-1);
-      g.drawString(z.minBpm + "-" + z.maxBpm + " BPM", 42, y);
-      g.setFont("Vector", 10).setColor("#AAA").drawString(z.name, 42, y+12);
+      let y = 30 + (i * 24);
+      g.setColor(z.color).fillRect(15, y, 40, y+16);
+      g.setColor("#000").setFont("Vector", 12).setFontAlign(0,0).drawString(i+1, 28, y+8);
+      g.setFont("Vector", 14).setColor("#FFF").setFontAlign(-1,-1).drawString(z.minBpm + " BPM", 50, y);
     });
-    
-    g.setFont("Vector", 10).setColor("#444").setFontAlign(0,0).drawString("KNOPF = ZURUECK", mid, 168);
-    g.flip();
     return;
   }
 
-  let bgColor = "#000";
-  let textColor = "#FFF";
-  let labelColor = "#AAA";
-
+  let bgColor = "#000", textColor = "#FFF", labelColor = "#888";
   if (isJogging && currentZone > 0) {
     bgColor = calculatedZones[currentZone - 1].color;
-    textColor = "#000";
-    labelColor = "#333";
+    textColor = "#000"; labelColor = "#444";
   }
 
   g.setBgColor(bgColor).clear();
-  
-  // Gear Button
-  g.setColor(isJogging ? "#000" : "#FFF").drawCircle(w-20, 20, 8);
 
-  // --- SCHRITTE ANZEIGE (AKTUALISIERT) ---
-  g.setFont("Vector", 14).setColor(isJogging ? textColor : "#0F0").setFontAlign(-1, -1);
-  g.drawString("👟 SCHRITTE: " + steps, 15, 10);
-  
-  // Werte
-  let avg = getAverageHR();
-  g.setFont("Vector", 16).setColor(labelColor).setFontAlign(-1, -1);
-  g.drawString("Aktuell:", 20, 50);
-  g.setFont("Vector", 32).setColor(textColor).setFontAlign(1, -1);
-  g.drawString(currentHR > 0 ? currentHR : "--", w - 20, 46);
-
-  g.setFont("Vector", 16).setColor(labelColor).setFontAlign(-1, -1);
-  g.drawString("AVG (10m):", 20, 95);
-  g.setFont("Vector", 32).setColor(textColor).setFontAlign(1, -1);
-  g.drawString(avg > 0 ? avg : "--", w - 20, 91);
-
+  // Top Bar
+  g.setFont("Vector", 12).setColor(isJogging ? textColor : "#0F0").setFontAlign(-1, -1);
+  g.drawString("👟 " + steps, 10, 10);
   if (isJogging) {
-    let zoneName = currentZone > 0 ? calculatedZones[currentZone-1].name : "Suche...";
-    g.setFont("Vector", 16).setColor(textColor).setFontAlign(0, 0).drawString(currentZone + ". " + zoneName.toUpperCase(), mid, 135);
+    let diff = Math.floor((now - startTime) / 1000);
+    g.setFont("Vector", 14).setColor(textColor).setFontAlign(1, -1);
+    g.drawString(Math.floor(diff/60) + ":" + ("0"+(diff%60)).slice(-2), w - 10, 10);
+  } else {
+    // Gear Icon (Zahnrad)
+    g.setColor("#FFF").drawCircle(w-15, 15, 6);
+    for(let i=0; i<8; i++){
+      let a = i*Math.PI/4;
+      g.drawLine(w-15+Math.cos(a)*6, 15+Math.sin(a)*6, w-15+Math.cos(a)*9, 15+Math.sin(a)*9);
+    }
+  }
+
+  // Puls Werte
+  g.setFont("Vector", 14).setColor(labelColor).setFontAlign(0, -1).drawString("AKTUELL", mid, 40);
+  g.setFont("Vector", 54).setColor(textColor).setFontAlign(0, -1).drawString(currentHR > 0 ? currentHR : "--", mid, 52);
+
+  let avg = getAverageHR();
+  g.setFont("Vector", 12).setColor(labelColor).setFontAlign(0, -1).drawString("AVG (10M)", mid, 110);
+  g.setFont("Vector", 20).setColor(textColor).setFontAlign(0, -1).drawString(avg > 0 ? avg : "--", mid, 122);
+
+  // Status / Alerts
+  if (isJogging && (now - zoneAlertTime < settings.alertTime * 1000)) {
+    g.setColor(textColor).fillRect(mid-35, 60, mid+35, 130);
+    g.setColor(bgColor).setFont("Vector", 60).setFontAlign(0,0).drawString(zoneAlertVal, mid, 98);
+  } else if (isJogging) {
+    let zoneName = currentZone > 0 ? calculatedZones[currentZone-1].name : "SUCHE PULS...";
+    g.setFont("Vector", 14).setColor(textColor).setFontAlign(0, 0).drawString(currentZone > 0 ? currentZone + ". " + zoneName.toUpperCase() : zoneName, mid, 150);
   }
 
   // Button
-  g.setColor(isJogging ? "#000" : "#111").fillRect(15, 148, w - 15, 172);
-  g.setColor(isJogging ? "#FFF" : "#0FF").setFont("Vector", 12).setFontAlign(0, 0);
-  g.drawString(isJogging ? "STOP JOGGING" : "START JOGGING", mid, 160);
-
+  g.setColor(isJogging ? "#000" : "#111").fillRect(20, 162, w - 20, 175);
+  g.setColor(isJogging ? "#FFF" : "#0FF").setFont("Vector", 12).setFontAlign(0, 0).drawString(isJogging ? "STOP" : "START JOGGING", mid, 169);
   g.flip();
 }
 
 // --- HARDWARE ---
-
 setWatch(() => {
-  if (isMenuOpen) {
-    isMenuOpen = false;
-    E.showMenu();
-    render();
-  } else if (view === "ZONES") {
-    view = "DASHBOARD";
-    render();
-  } else {
+  if (isMenuOpen) { isMenuOpen = false; E.showMenu(); render(); }
+  else if (view !== "DASHBOARD") { view = "DASHBOARD"; render(); }
+  else { 
+    if (lastSession.points.length > 0) storage.writeJSON("myhealth_session.json", lastSession);
     load(); 
   }
 }, BTN, { repeat: true, edge: "falling" });
 
 Bangle.on('touch', (n, e) => {
   if (isMenuOpen) return;
-  if (view === "ZONES") { view = "DASHBOARD"; render(); return; }
-  if (e.x > 130 && e.y < 50) { showSettingsMenu(); return; }
-  if (e.y > 140) {
+  if (view !== "DASHBOARD") { view = "DASHBOARD"; render(); return; }
+  if (!isJogging && e.x > 120 && e.y < 50) { showSettingsMenu(); return; }
+  if (e.y > 150) {
     isJogging = !isJogging;
-    currentZone = 0;
+    if (isJogging) {
+      startTime = Date.now();
+      lastSession = { points: [], max: 0, min: 200, lastUpdate: 0 };
+    } else {
+      storage.writeJSON("myhealth_session.json", lastSession);
+    }
     Bangle.buzz(100);
     Bangle.setHRMPower(1, "health");
     render();
@@ -198,6 +256,7 @@ Bangle.on('touch', (n, e) => {
 
 Bangle.on('HRM', h => { updateStats(h.bpm); render(); });
 Bangle.on('step', s => { steps = s; render(); });
+setInterval(() => { if (isJogging) render(); }, 1000);
 
 calculateZones();
 Bangle.setHRMPower(1, "init");
