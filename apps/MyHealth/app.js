@@ -1,8 +1,9 @@
 const storage = require("Storage");
 
-// --- SETTINGS ---
+// --- SETTINGS & DATA ---
 let settings = storage.readJSON("myhealth.json", 1) || {
-  age: 30, restHR: 60, maxHROverride: 0, buzzOnZone: true
+  age: 30, restHR: 60, maxHROverride: 0, buzzOnZone: true,
+  customZones: null // Speichert manuelle BPM-Werte
 };
 
 let lastSession = storage.readJSON("myhealth_session.json", 1) || { 
@@ -16,20 +17,32 @@ let currentHR = 0, currentZone = 0, view = "DASHBOARD", subView = 0;
 let isMenuOpen = false, lastUpdate = 0;
 
 const ZONE_DEFS = [
-  { name: "Z1", min: 0.50, color: "#00FFFF" },
-  { name: "Z2", min: 0.60, color: "#00FF00" },
-  { name: "Z3", min: 0.70, color: "#FFFF00" },
-  { name: "Z4", min: 0.80, color: "#FF8C00" },
-  { name: "Z5", min: 0.90, color: "#FF0000" }
+  { name: "Z1 (Aufwärmen)", min: 0.50, color: "#00FFFF" },
+  { name: "Z2 (Fettverb.)", min: 0.60, color: "#00FF00" },
+  { name: "Z3 (Ausdauer)", min: 0.70, color: "#FFFF00" },
+  { name: "Z4 (Anaerob)", min: 0.80, color: "#FF8C00" },
+  { name: "Z5 (Maximum)", min: 0.90, color: "#FF0000" }
 ];
 
 let calculatedZones = [];
+
 function calculateZones() {
   let maxHR = (settings.maxHROverride > 0) ? settings.maxHROverride : (220 - settings.age);
   let reserve = maxHR - settings.restHR;
-  calculatedZones = ZONE_DEFS.map((z) => {
-    return { name: z.name, minBpm: Math.round((reserve * z.min) + settings.restHR), color: z.color };
+  
+  calculatedZones = ZONE_DEFS.map((z, i) => {
+    let bpm = Math.round((reserve * z.min) + settings.restHR);
+    // Falls manuelle Werte existieren, diese nehmen
+    if (settings.customZones && settings.customZones[i]) {
+      bpm = settings.customZones[i];
+    }
+    return { name: z.name, minBpm: bpm, color: z.color };
   });
+}
+
+function saveSettings() {
+  storage.writeJSON("myhealth.json", settings);
+  calculateZones();
 }
 
 function updateStats(bpm) {
@@ -65,51 +78,69 @@ function updateStats(bpm) {
   }
 }
 
-// --- SUB-MENU: ZONEN VORSCHAU ---
-function showZonePreview() {
-  let menu = { "": { "title": "ZONEN (BPM)", "back": () => openMenu() } };
-  calculatedZones.forEach(z => {
-    menu[z.name] = { value: z.minBpm + " bpm" };
+// --- ZONEN EDITOR MENÜ ---
+function openZoneEditor() {
+  let menu = { "": { "title": "BPM ANPASSEN", "back": () => openMenu() } };
+  
+  if (!settings.customZones) {
+    settings.customZones = calculatedZones.map(z => z.minBpm);
+  }
+
+  calculatedZones.forEach((z, i) => {
+    menu[z.name] = {
+      value: settings.customZones[i],
+      min: 40, max: 220,
+      onchange: v => {
+        settings.customZones[i] = v;
+        saveSettings();
+      }
+    };
   });
+  
+  menu["Zonen Reset"] = () => {
+    settings.customZones = null;
+    saveSettings();
+    openZoneEditor();
+  };
+  
   E.showMenu(menu);
 }
 
-// --- MAIN MENU ---
+// --- HAUPTMENÜ ---
 function openMenu() {
   isMenuOpen = true;
   calculateZones();
   E.showMenu({
     "": { "title": "-- SETUP --", "back": () => { isMenuOpen=false; E.showMenu(); setUI(); render(); }},
-    "Alter": { value: settings.age, min: 10, max: 99, onchange: v => { settings.age = v; storage.writeJSON("myhealth.json", settings); calculateZones(); } },
-    "Ruhepuls": { value: settings.restHR, min: 30, max: 120, onchange: v => { settings.restHR = v; storage.writeJSON("myhealth.json", settings); calculateZones(); } },
+    "Alter": { value: settings.age, min: 10, max: 99, onchange: v => { settings.age = v; saveSettings(); } },
+    "Ruhepuls": { value: settings.restHR, min: 30, max: 120, onchange: v => { settings.restHR = v; saveSettings(); } },
+    "Max Puls": { 
+      value: (settings.maxHROverride > 0 ? settings.maxHROverride : (220-settings.age)), 
+      min: 100, max: 230, 
+      onchange: v => { settings.maxHROverride = v; saveSettings(); } 
+    },
     "Puls-Modus": { 
       value: (settings.maxHROverride > 0), 
       format: v => v ? "MANUELL" : "AUTO (220-A)",
       onchange: v => { 
-        if(!v) settings.maxHROverride = 0; 
-        else settings.maxHROverride = (220 - settings.age);
-        storage.writeJSON("myhealth.json", settings); calculateZones();
+        settings.maxHROverride = v ? (220 - settings.age) : 0;
+        saveSettings();
       } 
     },
-    "Max Puls": { 
-      value: (settings.maxHROverride > 0 ? settings.maxHROverride : (220-settings.age)), 
-      min: 100, max: 230, 
-      onchange: v => { settings.maxHROverride = v; storage.writeJSON("myhealth.json", settings); calculateZones(); } 
-    },
-    "ZONEN VORSCHAU": () => showZonePreview(),
-    "Vibration": { value: !!settings.buzzOnZone, onchange: v => { settings.buzzOnZone = v; storage.writeJSON("myhealth.json", settings); } },
+    "ZONEN BEARBEITEN": () => openZoneEditor(),
+    "Vibration": { value: !!settings.buzzOnZone, onchange: v => { settings.buzzOnZone = v; saveSettings(); } },
     "Letztes Training": () => { isMenuOpen=false; E.showMenu(); view="GRAPH"; subView=0; setUI(); render(); },
     "DATEN LÖSCHEN": () => { E.showPrompt("Sicher?").then(c => { if(c) { storage.delete("myhealth_session.json"); lastSession={points:[]}; } openMenu(); }); }
   });
 }
 
-// --- RENDER DASHBOARD & HISTORY ---
+// --- RENDER DASHBOARD & HISTORY (wie V37) ---
 function drawHistoryPage() {
   g.setBgColor("#000").clear();
   const w = g.getWidth(), h = g.getHeight();
   if (subView === 0) {
     let d = new Date(lastSession.ts || Date.now());
-    g.setColor("#0FF").setFont("Vector", 14).setFontAlign(0,-1).drawString("TRAINING VOM", w/2, 10);
+    g.setColor("#0FF").setFont("Vector", 14).setFontAlign(0,-1).drawString("LETZTES TRAINING", w/2, 10);
     g.setColor("#FFF").setFont("Vector", 18).drawString(("0"+d.getDate()).slice(-2)+"."+("0"+(d.getMonth()+1)).slice(-2)+"."+d.getFullYear(), w/2, 30);
     let stats = [
       {l: "Dauer:", v: Math.floor(lastSession.duration/60) + " Min", c: "#FFF"},
@@ -124,7 +155,7 @@ function drawHistoryPage() {
     g.setFont("Vector", 12).setColor("#0FF").setFontAlign(0, 0).drawString("<< WISCHEN FÜR GRAPH >>", w/2, h-12);
   } else {
     g.setColor("#FFF").setFont("Vector", 12).setFontAlign(0,-1).drawString("PULSVERLAUF", w/2, 5);
-    let minP = lastSession.min - 5, maxP = lastSession.max + 5, range = maxP - minP;
+    let minP = (lastSession.min||60) - 5, maxP = (lastSession.max||180) + 5, range = maxP - minP;
     const gT = 30, gB = h-35, gH = gB - gT;
     const getYp = (p) => gB - ((p - minP) / range) * gH;
     calculatedZones.forEach(z => {
@@ -132,9 +163,11 @@ function drawHistoryPage() {
       if (y >= gT && y <= gB) { g.setColor(z.color).drawLine(10, y, w-10, y); }
     });
     g.setColor("#FFF");
-    let stepX = (w-20) / (lastSession.points.length-1);
-    for (let i=0; i<lastSession.points.length-1; i++) {
-      g.drawLine(10+i*stepX, getYp(lastSession.points[i]), 10+(i+1)*stepX, getYp(lastSession.points[i+1]));
+    if (lastSession.points.length > 1) {
+      let stepX = (w-20) / (lastSession.points.length-1);
+      for (let i=0; i<lastSession.points.length-1; i++) {
+        g.drawLine(10+i*stepX, getYp(lastSession.points[i]), 10+(i+1)*stepX, getYp(lastSession.points[i+1]));
+      }
     }
     g.setColor("#333").fillRect(0, h-24, w, h);
     g.setFontAlign(0,0).setColor("#0FF").setFont("Vector", 12).drawString("<< ZURÜCK ZU STATS >>", w/2, h-12);
