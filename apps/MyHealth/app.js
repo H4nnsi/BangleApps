@@ -15,6 +15,7 @@ let hrHistory = [];
 let steps = 0, isJogging = false, startTime = 0, startSteps = 0;
 let currentHR = 0, currentZone = 0, view = "DASHBOARD", subView = 0;
 let isMenuOpen = false, lastUpdate = 0;
+let lastResetDay = new Date().getDate();
 
 const ZONE_DEFS = [
   { name: "Z1 (Aufwärmen)", min: 0.50, color: "#00FFFF" },
@@ -173,6 +174,25 @@ function drawHistoryPage() {
     g.setFontAlign(0,0).setColor("#0FF").setFont("Vector", 12).drawString("<< ZURÜCK ZU STATS >>", w/2, h-12);
   }
 }
+
+function checkDailyReset() {
+  let today = new Date().getDate();
+  if (today !== lastResetDay) {
+    // Es ist ein neuer Tag!
+    steps = 0; 
+    startSteps = 0; // Falls du gerade joggst, auch das Training nullen
+    lastResetDay = today;
+    
+    // Optional: Den internen Zähler der Uhr ebenfalls nullen, 
+    // falls die Firmware es nicht tut:
+    if (Bangle.setStepCount) Bangle.setStepCount(0);
+    
+    print("Schrittzähler für neuen Tag resettet.");
+  }
+}
+
+// Diese Funktion rufen wir alle 60 Sekunden auf
+setInterval(checkDailyReset, 6000000)
 
 function render() {
   if (isMenuOpen) return;
