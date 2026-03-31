@@ -129,12 +129,20 @@ function drawLockIcon(x, y, color) {
   g.drawRect(x + 2, y, x + 8, y + 4);    // Bügel
 }
 
+// --- 4. ZEICHEN-FUNKTIONEN (OPTIMIERT) ---
 function render() {
   if (isMenuOpen) return;
   if (view === "GRAPH") { drawHistoryPage(); g.flip(); return; }
 
-  const w = g.getWidth(), h = g.getHeight(), midX = w / 2 + 15;
+  const w = g.getWidth(), h = g.getHeight();
+  
+  // DYNAMISCHE MITTE: Wenn wir joggen, rückt der Puls nach rechts, 
+  // um Platz für die Zonen zu machen. Wenn nicht, ist er exakt in der Mitte (w/2).
+  const zoneBarWidth = 35; 
+  let midX = isJogging ? (zoneBarWidth + (w - zoneBarWidth) / 2) : (w / 2);
+  
   let bgColor = "#000", txtCol = "#FFF", labCol = "#888";
+  
   if (isJogging && currentZone > 0) { 
     bgColor = calculatedZones[currentZone-1].color; 
     txtCol = "#000"; labCol = "#333"; 
@@ -147,30 +155,35 @@ function render() {
   g.setFont("Vector", 16).setColor(isJogging ? txtCol : "#0F0").setFontAlign(-1, -1).drawString("👟 " + steps, 25, 5);
 
   if (isJogging) {
-    // GROSSE ZONEN LINKS
+    // --- JOGGING MODUS: ZONEN & DAUER ---
     const barX = 5, barW = 25, barYStart = 35, stepH = 110 / 5;
     calculatedZones.forEach((z, i) => {
       let y = barYStart + ((4 - i) * stepH);
+      
+      // VOLL AUSGEFÜLLTE FARBKÄSTEN
       g.setColor(z.color);
-      if (currentZone === i + 1) {
-        g.fillRect(barX, y, barX + barW, y + stepH - 3);
-        g.setColor(txtCol).setFont("Vector", 18).setFontAlign(-1, 0).drawString(z.minBpm, barX + barW + 5, y + stepH / 2);
-      } else {
-        g.drawRect(barX, y, barX + (barW - 10), y + stepH - 3);
-        g.setColor(labCol).setFont("Vector", 12).setFontAlign(-1, 0).drawString(z.minBpm, barX + barW - 2, y + stepH / 2);
-      }
+      g.fillRect(barX, y, barX + barW, y + stepH - 3);
+      
+      // ZAHLEN FÜR ZONENWECHSEL (Größer & leserlicher)
+      g.setColor(currentZone === i + 1 ? txtCol : labCol);
+      g.setFont("Vector", currentZone === i + 1 ? 22 : 16); 
+      g.setFontAlign(-1, 0).drawString(z.minBpm, barX + barW + 5, y + stepH / 2);
     });
-    // Dauer oben rechts
+
     let diff = Math.floor((Date.now() - startTime) / 1000);
     g.setFont("Vector", 16).setColor(txtCol).setFontAlign(1, -1).drawString(Math.floor(diff/60)+":"+("0"+(diff%60)).slice(-2), w-5, 5);
   }
 
-  // PULS HAUPTANZEIGE
+  // PULS HAUPTANZEIGE (Immer da)
   g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("PULS", midX, 40);
   g.setFont("Vector", 56).setColor(txtCol).setFontAlign(0, -1).drawString(currentHR || "--", midX, 55);
-  let avg = hrHistory.length ? Math.round(hrHistory.reduce((a,b)=>a+b, 0)/hrHistory.length) : "--";
-  g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("AVG (10M)", midX, 115);
-  g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 130);
+
+  // --- DURCHSCHNITT (Nur anzeigen, wenn NICHT gejoggt wird) ---
+  if (!isJogging) {
+    let avg = hrHistory.length ? Math.round(hrHistory.reduce((a,b)=>a+b, 0)/hrHistory.length) : "--";
+    g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("AVG (10M)", midX, 115);
+    g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 130);
+  }
 
   // BUTTON
   g.setColor(isJogging ? "#000" : "#111").fillRect(20, 155, w-10, 175);
@@ -178,7 +191,6 @@ function render() {
   if (!isJogging) g.setColor("#FFF").drawCircle(w-15, 15, 8);
   g.flip();
 }
-
 // --- 5. MENÜS ---
 function showWeeklyLog() {
   let log = storage.readJSON("myhealth_weekly.json", 1) || [];
