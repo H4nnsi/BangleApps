@@ -28,7 +28,7 @@ const ZONE_DEFS = [
 ];
 let calculatedZones = [];
 
-// --- 2. HINTERGRUND-SERVICE INSTALLATION ---
+// --- 2. HINTERGRUND-SERVICE (JETZT MIT SCHRITT-SPEICHERUNG) ---
 function installBackgroundService() {
   const bootCode = `
     setInterval(() => {
@@ -41,14 +41,16 @@ function installBackgroundService() {
               let log = require("Storage").readJSON("myhealth_weekly.json", 1) || [];
               let today = new Date().toISOString().split('T')[0];
               let dayEntry = log.find(e => e.date === today);
+              let sCount = Bangle.getStepCount ? Bangle.getStepCount() : 0;
               if (!dayEntry) {
-                dayEntry = { date: today, min: h.bpm, max: h.bpm, sum: h.bpm, count: 1 };
+                dayEntry = { date: today, min: h.bpm, max: h.bpm, sum: h.bpm, count: 1, steps: sCount };
                 log.push(dayEntry);
               } else {
                 dayEntry.min = Math.min(dayEntry.min, h.bpm);
                 dayEntry.max = Math.max(dayEntry.max, h.bpm);
                 dayEntry.sum += h.bpm;
                 dayEntry.count++;
+                dayEntry.steps = sCount; // Aktualisiert Schritte
               }
               if (log.length > 7) log.shift();
               require("Storage").writeJSON("myhealth_weekly.json", log);
@@ -125,24 +127,23 @@ function updateStats(bpm) {
 // --- 4. ZEICHEN-FUNKTIONEN ---
 function drawLockIcon(x, y, color) {
   g.setColor(color);
-  g.fillRect(x, y + 4, x + 10, y + 10); // Schlosskörper
-  g.drawRect(x + 2, y, x + 8, y + 4);    // Bügel
+  g.fillRect(x, y + 4, x + 10, y + 10);
+  g.drawRect(x + 2, y, x + 8, y + 4);
 }
 
-// --- 4. ZEICHEN-FUNKTIONEN (OPTIMIERT) ---
 function render() {
   if (isMenuOpen) return;
   if (view === "GRAPH") { drawHistoryPage(); g.flip(); return; }
 
   const w = g.getWidth(), h = g.getHeight();
   
-  // DYNAMISCHE MITTE: Wenn wir joggen, rückt der Puls nach rechts, 
-  // um Platz für die Zonen zu machen. Wenn nicht, ist er exakt in der Mitte (w/2).
+  // DYNAMISCHE MITTE: 
+  // Wenn wir joggen, schieben wir das Zentrum etwas weiter nach rechts (w/2 + 10),
+  // um maximalen Abstand zur Zonen-Leiste links zu gewinnen.
   const zoneBarWidth = 35; 
-  let midX = isJogging ? (zoneBarWidth + (w - zoneBarWidth) / 2) : (w / 2);
+  let midX = isJogging ? (w / 2 + 12) : (w / 2);
   
   let bgColor = "#000", txtCol = "#FFF", labCol = "#888";
-  
   if (isJogging && currentZone > 0) { 
     bgColor = calculatedZones[currentZone-1].color; 
     txtCol = "#000"; labCol = "#333"; 
@@ -150,39 +151,38 @@ function render() {
   
   g.setBgColor(bgColor).clear();
 
-  // OBERE ZEILE: Schloss & Schritte
+  // OBERE ZEILE
   if (isLocked) drawLockIcon(5, 5, isJogging ? txtCol : "#FF0");
   g.setFont("Vector", 16).setColor(isJogging ? txtCol : "#0F0").setFontAlign(-1, -1).drawString("👟 " + steps, 25, 5);
 
   if (isJogging) {
-    // --- JOGGING MODUS: ZONEN & DAUER ---
-    const barX = 5, barW = 25, barYStart = 35, stepH = 110 / 5;
+    // --- JOGGING MODUS: ZONEN ---
+    const barX = 2, barW = 18, barYStart = 35, stepH = 110 / 5;
     calculatedZones.forEach((z, i) => {
       let y = barYStart + ((4 - i) * stepH);
-      
-      // VOLL AUSGEFÜLLTE FARBKÄSTEN
       g.setColor(z.color);
       g.fillRect(barX, y, barX + barW, y + stepH - 3);
       
-      // ZAHLEN FÜR ZONENWECHSEL (Größer & leserlicher)
+      // Zonen-BPM: Etwas eingerückt (Größe 14/12)
       g.setColor(currentZone === i + 1 ? txtCol : labCol);
-      g.setFont("Vector", currentZone === i + 1 ? 22 : 16); 
-      g.setFontAlign(-1, 0).drawString(z.minBpm, barX + barW + 5, y + stepH / 2);
+      g.setFont("Vector", currentZone === i + 1 ? 16 : 12); 
+      g.setFontAlign(-1, 0).drawString(z.minBpm, barX + barW + 3, y + stepH / 2);
     });
 
     let diff = Math.floor((Date.now() - startTime) / 1000);
     g.setFont("Vector", 16).setColor(txtCol).setFontAlign(1, -1).drawString(Math.floor(diff/60)+":"+("0"+(diff%60)).slice(-2), w-5, 5);
   }
 
-  // PULS HAUPTANZEIGE (Immer da)
-  g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("PULS", midX, 40);
-  g.setFont("Vector", 56).setColor(txtCol).setFontAlign(0, -1).drawString(currentHR || "--", midX, 55);
+  // --- PULS HAUPTANZEIGE (KOMPAKT) ---
+  g.setFont("Vector", 12).setColor(labCol).setFontAlign(0, -1).drawString("PULS", midX, 42);
+  // Größe auf 40 reduziert - das passt auch bei 180 bpm locker neben die Zonen
+  g.setFont("Vector", 40).setColor(txtCol).setFontAlign(0, -1).drawString(currentHR || "--", midX, 55);
 
-  // --- DURCHSCHNITT (Nur anzeigen, wenn NICHT gejoggt wird) ---
+  // --- DURCHSCHNITT (Nur im Stand) ---
   if (!isJogging) {
     let avg = hrHistory.length ? Math.round(hrHistory.reduce((a,b)=>a+b, 0)/hrHistory.length) : "--";
-    g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("AVG (10M)", midX, 115);
-    g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 130);
+    g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("AVG (10M)", midX, 110);
+    g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 125);
   }
 
   // BUTTON
@@ -191,18 +191,38 @@ function render() {
   if (!isJogging) g.setColor("#FFF").drawCircle(w-15, 15, 8);
   g.flip();
 }
+
 // --- 5. MENÜS ---
 function showWeeklyLog() {
   let log = storage.readJSON("myhealth_weekly.json", 1) || [];
   let menu = { "": { "title": "WOCHEN LOG", "back": () => openMenu() } };
+  
   if (log.length === 0) {
     menu["Keine Daten"] = () => {};
   } else {
-    log.reverse().forEach(e => {
-      let avg = Math.round(e.sum / e.count);
+    // Schritt-Statistik berechnen
+    let sSum = 0, sMin = 999999, sMax = 0;
+    log.forEach(e => {
+      let s = e.steps || 0;
+      sSum += s;
+      if (s < sMin) sMin = s;
+      if (s > sMax) sMax = s;
+    });
+    let sAvg = Math.round(sSum / log.length);
+
+    menu[`Ø-Schritte: ${sAvg}`] = () => {
+       E.showAlert(`WOCHE SCHRITTE:\nMin: ${sMin}\nMax: ${sMax}\nSchnitt: ${sAvg}`).then(() => showWeeklyLog());
+    };
+    menu["----------"] = () => {};
+
+    log.slice().reverse().forEach(e => {
+      let avgP = Math.round(e.sum / e.count);
       let d = e.date.split('-');
-      menu[d[2] + "." + d[1] + ". Ø" + avg] = () => {
-        E.showAlert(`Min: ${e.min}\nMax: ${e.max}\nDurchschnitt: ${avg}`).then(() => showWeeklyLog());
+      let dayStr = d[2] + "." + d[1];
+      let stepStr = e.steps ? (e.steps > 999 ? (e.steps/1000).toFixed(1)+"k" : e.steps) : "0";
+
+      menu[dayStr + " | " + stepStr + " Sch."] = () => {
+        E.showAlert(`Tag: ${dayStr}\nSteps: ${e.steps||0}\n\nPULS:\nMin: ${e.min}\nMax: ${e.max}\nAvg: ${avgP}`).then(() => showWeeklyLog());
       };
     });
   }
