@@ -320,9 +320,13 @@ function setUI() {
   Bangle.setUI({
     mode: "custom",
     swipe: (dir) => { if (view === "GRAPH") { subView = (subView === 0) ? 1 : 0; Bangle.buzz(40); render(); } },
+    // NEU: Der Button wird jetzt sauber über die UI-Engine verwaltet
+    btn: (n) => {
+      if (view === "GRAPH") { view = "DASHBOARD"; setUI(); render(); }
+      else { load(); } // App verlassen, wenn wir auf dem Hauptscreen sind
+    },
     touch: (n, e) => {
       if (view === "GRAPH") return;
-      // NEU: Größerer Touch-Bereich oben rechts fürs Zahnrad
       if (!isJogging && e.x > (g.getWidth() - 60) && e.y < 60) { openMenu(); return; }
       if (e.y > 150) {
         isJogging = !isJogging;
@@ -336,12 +340,6 @@ function setUI() {
 Bangle.on('lock', locked => { isLocked = locked; render(); });
 Bangle.on('HRM', h => { updateStats(h.bpm); if(!isMenuOpen) render(); });
 Bangle.on('step', s => { steps = s; if(!isMenuOpen) render(); });
-
-setWatch(() => {
-  if (isMenuOpen) { isMenuOpen=false; E.showMenu(); setUI(); render(); }
-  else if (view === "GRAPH") { view="DASHBOARD"; setUI(); render(); }
-  else { load(); }
-}, BTN1, { repeat: true, edge: "falling" });
 
 setInterval(() => { if (isJogging && !isMenuOpen) render(); }, 1000);
 
