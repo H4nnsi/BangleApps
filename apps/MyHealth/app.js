@@ -5,8 +5,6 @@ let settings = storage.readJSON("myhealth.json", 1) || {
   age: 30, restHR: 60, maxHROverride: 0, buzzOnZone: true, customZones: null
 };
 
-let weeklyLog = storage.readJSON("myhealth_weekly.json", 1) || [];
-
 let lastSession = storage.readJSON("myhealth_session.json", 1) || { 
   points: [], max: 0, min: 250, ts: 0, duration: 0, steps: 0 
 };
@@ -19,6 +17,10 @@ let isMenuOpen = false, lastUpdate = 0;
 let isLocked = Bangle.isLocked(); 
 let lastResetDay = new Date().getDate();
 
+// NEU: Variablen für das Zonen-Overlay
+let zoneOverlay = null;     
+let lastZoneChange = 0;     
+
 const ZONE_DEFS = [
   { name: "Z1", min: 0.50, color: "#00FFFF" },
   { name: "Z2", min: 0.60, color: "#00FF00" },
@@ -28,42 +30,53 @@ const ZONE_DEFS = [
 ];
 let calculatedZones = [];
 
-// --- 2. HINTERGRUND-SERVICE (JETZT MIT SCHRITT-SPEICHERUNG) ---
+// --- 2. HINTERGRUND-SERVICE (MIT 24-UHR-BACKUP) ---
 function installBackgroundService() {
   const bootCode = `
     setInterval(() => {
       let now = new Date();
       if (now.getMinutes() % 10 === 0) {
+        // 1. Messung durchführen
         Bangle.setHRMPower(1, "myhealth_bg");
         setTimeout(() => {
           Bangle.once('HRM', h => {
-            if (h.confidence > 70) {
-              let log = require("Storage").readJSON("myhealth_weekly.json", 1) || [];
-              let today = new Date().toISOString().split('T')[0];
-              let dayEntry = log.find(e => e.date === today);
-              let sCount = Bangle.getStepCount ? Bangle.getStepCount() : 0;
-              if (!dayEntry) {
-                dayEntry = { date: today, min: h.bpm, max: h.bpm, sum: h.bpm, count: 1, steps: sCount };
-                log.push(dayEntry);
-              } else {
-                dayEntry.min = Math.min(dayEntry.min, h.bpm);
-                dayEntry.max = Math.max(dayEntry.max, h.bpm);
-                dayEntry.sum += h.bpm;
-                dayEntry.count++;
-                dayEntry.steps = sCount; // Aktualisiert Schritte
-              }
-              if (log.length > 7) log.shift();
-              require("Storage").writeJSON("myhealth_weekly.json", log);
+            if (h && h.confidence > 60) {
+              let todayData = require("Storage").readJSON("myhealth_today.json", 1) || { sum:0, count:0, min:250, max:0, steps:0 };
+              todayData.sum += h.bpm;
+              todayData.count++;
+              todayData.min = Math.min(todayData.min, h.bpm);
+              todayData.max = Math.max(todayData.max, h.bpm);
+              todayData.steps = Bangle.getStepCount ? Bangle.getStepCount() : 0;
+              require("Storage").writeJSON("myhealth_today.json", todayData);
             }
             Bangle.setHRMPower(0, "myhealth_bg");
           });
-        }, 20000);
+        }, 15000);
+
+        // 2. Mitternachts-Check (Wochenlog schreiben)
+        if (now.getHours() === 0 && now.getMinutes() === 0) {
+          let todayData = require("Storage").readJSON("myhealth_today.json", 1);
+          if (todayData && todayData.count > 0) {
+            let log = require("Storage").readJSON("myhealth_weekly.json", 1) || [];
+            let yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+            
+            log.push({
+              date: yesterday,
+              min: todayData.min,
+              max: todayData.max,
+              avg: Math.round(todayData.sum / todayData.count),
+              steps: todayData.steps
+            });
+
+            if (log.length > 7) log.shift();
+            require("Storage").writeJSON("myhealth_weekly.json", log);
+            require("Storage").writeJSON("myhealth_today.json", { sum:0, count:0, min:250, max:0, steps:0 });
+          }
+        }
       }
     }, 60000);
   `;
-  if (storage.read("myhealth.boot.js") !== bootCode) {
-    storage.write("myhealth.boot.js", bootCode);
-  }
+  require("Storage").write("myhealth.boot.js", bootCode);
 }
 installBackgroundService();
 
@@ -105,10 +118,19 @@ function updateStats(bpm) {
     for (let i = calculatedZones.length - 1; i >= 0; i--) {
       if (bpm >= calculatedZones[i].minBpm) { newZone = i + 1; break; }
     }
-    if (newZone !== currentZone && currentZone !== 0) {
-      if (settings.buzzOnZone) Bangle.buzz(500);
+
+    // NEU: Zonenwechsel mit Overlay und 30s Cooldown
+    if (newZone !== currentZone && currentZone !== 0 && (now - lastZoneChange > 30000)) {
+      if (settings.buzzOnZone) Bangle.buzz(600);
+      currentZone = newZone;
+      lastZoneChange = now;
+      zoneOverlay = "ZONE " + newZone;
+      
+      setTimeout(() => { zoneOverlay = null; render(); }, 3000);
+    } else if (currentZone === 0) {
+      currentZone = newZone; // Erster Start ohne Sperre
     }
-    currentZone = newZone;
+
     if (now - lastUpdate > 10000) {
       activeSession.points.push(bpm);
       activeSession.max = Math.max(activeSession.max, bpm);
@@ -131,15 +153,27 @@ function drawLockIcon(x, y, color) {
   g.drawRect(x + 2, y, x + 8, y + 4);
 }
 
+// NEU: Zahnrad-Zeichenfunktion
+function drawGear(x, y, r, bgCol) {
+  g.setColor("#FFF").fillCircle(x, y, r); 
+  for(let i = 0; i < 8; i++) {
+    let a = i * Math.PI / 4;
+    let tipX = x + Math.cos(a) * (r + 4); 
+    let tipY = y + Math.sin(a) * (r + 4);
+    let baseX1 = x + Math.cos(a - 0.3) * r; 
+    let baseY1 = y + Math.sin(a - 0.3) * r;
+    let baseX2 = x + Math.cos(a + 0.3) * r; 
+    let baseY2 = y + Math.sin(a + 0.3) * r;
+    g.fillPoly([tipX, tipY, baseX1, baseY1, baseX2, baseY2]);
+  }
+  g.setColor(bgCol).fillCircle(x, y, r * 0.45); 
+}
+
 function render() {
   if (isMenuOpen) return;
   if (view === "GRAPH") { drawHistoryPage(); g.flip(); return; }
 
   const w = g.getWidth(), h = g.getHeight();
-  
-  // DYNAMISCHE MITTE: 
-  // Wenn wir joggen, schieben wir das Zentrum etwas weiter nach rechts (w/2 + 10),
-  // um maximalen Abstand zur Zonen-Leiste links zu gewinnen.
   const zoneBarWidth = 35; 
   let midX = isJogging ? (w / 2 + 12) : (w / 2);
   
@@ -151,44 +185,46 @@ function render() {
   
   g.setBgColor(bgColor).clear();
 
-  // OBERE ZEILE
   if (isLocked) drawLockIcon(5, 5, isJogging ? txtCol : "#FF0");
   g.setFont("Vector", 16).setColor(isJogging ? txtCol : "#0F0").setFontAlign(-1, -1).drawString("👟 " + steps, 25, 5);
 
   if (isJogging) {
-    // --- JOGGING MODUS: ZONEN ---
     const barX = 2, barW = 18, barYStart = 35, stepH = 110 / 5;
     calculatedZones.forEach((z, i) => {
       let y = barYStart + ((4 - i) * stepH);
-      g.setColor(z.color);
-      g.fillRect(barX, y, barX + barW, y + stepH - 3);
-      
-      // Zonen-BPM: Etwas eingerückt (Größe 14/12)
+      g.setColor(z.color).fillRect(barX, y, barX + barW, y + stepH - 3);
       g.setColor(currentZone === i + 1 ? txtCol : labCol);
       g.setFont("Vector", currentZone === i + 1 ? 16 : 12); 
       g.setFontAlign(-1, 0).drawString(z.minBpm, barX + barW + 3, y + stepH / 2);
     });
-
     let diff = Math.floor((Date.now() - startTime) / 1000);
     g.setFont("Vector", 16).setColor(txtCol).setFontAlign(1, -1).drawString(Math.floor(diff/60)+":"+("0"+(diff%60)).slice(-2), w-5, 5);
   }
 
-  // --- PULS HAUPTANZEIGE (KOMPAKT) ---
   g.setFont("Vector", 12).setColor(labCol).setFontAlign(0, -1).drawString("PULS", midX, 42);
-  // Größe auf 40 reduziert - das passt auch bei 180 bpm locker neben die Zonen
   g.setFont("Vector", 40).setColor(txtCol).setFontAlign(0, -1).drawString(currentHR || "--", midX, 55);
 
-  // --- DURCHSCHNITT (Nur im Stand) ---
   if (!isJogging) {
     let avg = hrHistory.length ? Math.round(hrHistory.reduce((a,b)=>a+b, 0)/hrHistory.length) : "--";
     g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("AVG (10M)", midX, 110);
     g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 125);
   }
 
-  // BUTTON
   g.setColor(isJogging ? "#000" : "#111").fillRect(20, 155, w-10, 175);
   g.setColor(isJogging ? "#FFF" : "#0FF").setFont("Vector", 15).setFontAlign(0,0).drawString(isJogging?"STOP":"START JOGGING", w/2+10, 165);
-  if (!isJogging) g.setColor("#FFF").drawCircle(w-15, 15, 8);
+  
+  // NEU: Zahnrad aufrufen
+  if (!isJogging) drawGear(w - 20, 20, 10, bgColor);
+
+  // NEU: Großes Zonen Overlay zeichnen
+  if (isJogging && zoneOverlay) {
+    g.setColor("#000").fillRect(10, 50, w-10, 130);
+    g.setColor("#FFF").drawRect(10, 50, w-10, 130);
+    g.setFont("Vector", 30).setFontAlign(0, 0);
+    g.setColor(calculatedZones[currentZone-1].color);
+    g.drawString(zoneOverlay, w/2, 90);
+  }
+
   g.flip();
 }
 
@@ -198,31 +234,26 @@ function showWeeklyLog() {
   let menu = { "": { "title": "WOCHEN LOG", "back": () => openMenu() } };
   
   if (log.length === 0) {
-    menu["Keine Daten"] = () => {};
+    menu["Keine Daten (Warte bis 0 Uhr)"] = () => {};
   } else {
-    // Schritt-Statistik berechnen
-    let sSum = 0, sMin = 999999, sMax = 0;
+    let sSum = 0, sMax = 0;
     log.forEach(e => {
-      let s = e.steps || 0;
-      sSum += s;
-      if (s < sMin) sMin = s;
-      if (s > sMax) sMax = s;
+      sSum += e.steps;
+      if (e.steps > sMax) sMax = e.steps;
     });
     let sAvg = Math.round(sSum / log.length);
 
-    menu[`Ø-Schritte: ${sAvg}`] = () => {
-       E.showAlert(`WOCHE SCHRITTE:\nMin: ${sMin}\nMax: ${sMax}\nSchnitt: ${sAvg}`).then(() => showWeeklyLog());
-    };
+    menu[`Ø-Schritte: ${sAvg}`] = () => E.showAlert(`WOCHE:\nSchnitt: ${sAvg}\nBestwert: ${sMax}`).then(() => showWeeklyLog());
     menu["----------"] = () => {};
 
+    // NEU: Angepasste Auslese-Logik für Mitternachts-Daten
     log.slice().reverse().forEach(e => {
-      let avgP = Math.round(e.sum / e.count);
       let d = e.date.split('-');
-      let dayStr = d[2] + "." + d[1];
-      let stepStr = e.steps ? (e.steps > 999 ? (e.steps/1000).toFixed(1)+"k" : e.steps) : "0";
-
-      menu[dayStr + " | " + stepStr + " Sch."] = () => {
-        E.showAlert(`Tag: ${dayStr}\nSteps: ${e.steps||0}\n\nPULS:\nMin: ${e.min}\nMax: ${e.max}\nAvg: ${avgP}`).then(() => showWeeklyLog());
+      let dayLabel = `${d[2]}.${d[1]}. | ${e.steps > 999 ? (e.steps/1000).toFixed(1)+"k" : e.steps}`;
+      
+      menu[dayLabel] = () => {
+        E.showAlert(`DATUM: ${d[2]}.${d[1]}.\nSTEPS: ${e.steps}\n\nPULS:\nMin: ${e.min}\nMax: ${e.max}\nSchnitt: ${e.avg}`)
+          .then(() => showWeeklyLog());
       };
     });
   }
@@ -250,7 +281,7 @@ function openMenu() {
     "WOCHEN-LOG": () => showWeeklyLog(),
     "Letztes Training": () => { isMenuOpen=false; E.showMenu(); view="GRAPH"; subView=0; setUI(); render(); },
     "Vibration": { value: !!settings.buzzOnZone, onchange: v => { settings.buzzOnZone = v; saveSettings(); } },
-    "LÖSCHEN": () => { E.showPrompt("Sicher?").then(c => { if(c) { storage.delete("myhealth_weekly.json"); storage.delete("myhealth_session.json"); } openMenu(); }); }
+    "LÖSCHEN": () => { E.showPrompt("Sicher?").then(c => { if(c) { storage.delete("myhealth_weekly.json"); storage.delete("myhealth_today.json"); storage.delete("myhealth_session.json"); } openMenu(); }); }
   });
 }
 
@@ -291,7 +322,8 @@ function setUI() {
     swipe: (dir) => { if (view === "GRAPH") { subView = (subView === 0) ? 1 : 0; Bangle.buzz(40); render(); } },
     touch: (n, e) => {
       if (view === "GRAPH") return;
-      if (!isJogging && e.x > 120 && e.y < 50) { openMenu(); return; }
+      // NEU: Größerer Touch-Bereich oben rechts fürs Zahnrad
+      if (!isJogging && e.x > (g.getWidth() - 60) && e.y < 60) { openMenu(); return; }
       if (e.y > 150) {
         isJogging = !isJogging;
         if (isJogging) { startTime = Date.now(); startSteps = steps; activeSession = { points: [], max: 0, min: 250, ts: Date.now(), duration: 0, steps: 0 }; }
