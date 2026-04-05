@@ -4,6 +4,7 @@
   "version":"0.01",
   "author": "H4nnsi",
   "description": "this is my Health app",
+  "src": "app-icon.js",
   "icon": "app.png",
   "tags": "",
   "supports" : ["BANGLEJS2"],
