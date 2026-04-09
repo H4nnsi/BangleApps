@@ -29,12 +29,12 @@ const ZONE_DEFS = [
 ];
 let calculatedZones = [];
 
-// --- 2. HINTERGRUND-SERVICE (Kombiniert: Bangle Standard + Custom UI Daten) ---
+// --- 2. HINTERGRUND-SERVICE (Kombiniert & Repariert) ---
 function installBackgroundService() {
   const bootCode = `
 { 
   let settings = require("Storage").readJSON("health.json", 1) || {};
-  let hrm = settings.hrm !== undefined ? settings.hrm : 2; // 2 = 10 Minuten
+  let hrm = settings.hrm !== undefined ? settings.hrm : 2; 
   
   if (hrm == 1 || hrm == 2) { 
     let onHealth = function(h) {
@@ -58,7 +58,7 @@ function installBackgroundService() {
       Object.assign(health, pressure); 
       var d = new Date(Date.now() - 590000);
 
-      // --- OFFIZIELLE .RAW AUFZEICHNUNG & SCHRITTZIEL ---
+      // --- Schrittziel ---
       if (health && health.steps > 0) {
         var sSettings = require("Storage").readJSON("health.json",1)||{};
         const stepsDay = Bangle.getHealthStatus("day").steps;
@@ -66,21 +66,34 @@ function installBackgroundService() {
           const nowStr = new Date(Date.now()).toISOString().split('T')[0];
           if (!sSettings.stepGoalNotificationDate || sSettings.stepGoalNotificationDate < nowStr) {
             Bangle.buzz(200, 0.5);
-            require("notify").show({ title: sSettings.stepGoal + " Schritte", body: "Ziel erreicht!", icon: atob("DAyBABmD6BaBMAsA8BCBCBCBCA8AAA==") });
+            require("notify").show({ title: sSettings.stepGoal + " Schritte", body: "Ziel erreicht!" });
             sSettings.stepGoalNotificationDate = nowStr;
             require("Storage").writeJSON("health.json", sSettings);
           }
         }
       }
 
+      // --- OFFIZIELLE .RAW AUFZEICHNUNG (MIT FIX) ---
       let inf = require("health").getDecoder("HEALTH2");
       let fn = "health-"+d.getFullYear()+"-"+(d.getMonth()+1)+".raw";
       let rec = (145*(d.getDate()-1)) + (6*d.getHours()) + (0|(d.getMinutes()*6/60));
       let f = require("Storage").read(fn);
-      if (!f) { require("Storage").write(fn, "HEALTH2\\0", 0, 8 + 145*31*inf.r); }
-      require("Storage").write(fn, inf.encode(health), 8+(rec*inf.r));
+      let recordPos = 8 + (rec * inf.r);
+      
+      if (f !== undefined) {
+        // HIER IST DIE FEHLENDE PRÜFUNG:
+        let dt = f.substr(recordPos, inf.r);
+        if (dt !== inf.clr) {
+          print("[BG] .raw Block bereits beschrieben (Skipped)");
+        } else {
+          require("Storage").write(fn, inf.encode(health), recordPos);
+        }
+      } else {
+        require("Storage").write(fn, "HEALTH2\\0", 0, 8 + 145*31*inf.r);
+        require("Storage").write(fn, inf.encode(health), recordPos);
+      }
 
-      // --- CUSTOM DATEN FÜR DEIN DASHBOARD (myhealth_today.json) ---
+      // --- CUSTOM DATEN FÜR DEIN DASHBOARD ---
       if (health.bpm > 0) {
         let todayStr = new Date().toISOString().split('T')[0];
         let todayData = require("Storage").readJSON("myhealth_today.json", 1) || { date: todayStr, sum:0, count:0, min:250, max:0, steps:0, points:[] };
@@ -102,7 +115,7 @@ function installBackgroundService() {
         todayData.points.push(health.bpm);
         todayData.steps = Bangle.getStepCount ? Bangle.getStepCount() : 0;
         require("Storage").writeJSON("myhealth_today.json", todayData);
-        print("[BG] Dashboard & Raw Daten aktualisiert. Puls: " + health.bpm);
+        print("[BG] Dashboard aktualisiert. Puls: " + health.bpm);
       }
     });
   });
@@ -110,10 +123,9 @@ function installBackgroundService() {
   `;
   if (storage.read("myhealth.boot.js") !== bootCode) {
     storage.write("myhealth.boot.js", bootCode);
-    print("-> Profi Hintergrund-Service installiert!");
+    print("-> Profi Hintergrund-Service aktualisiert!");
   }
 }
-
 // --- 3. LOGIK ---
 function calculateZones() {
   let maxHR = (settings.maxHROverride > 0) ? settings.maxHROverride : (220 - settings.age);
