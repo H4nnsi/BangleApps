@@ -29,47 +29,89 @@ const ZONE_DEFS = [
 ];
 let calculatedZones = [];
 
-// --- 2. HINTERGRUND-SERVICE ---
+// --- 2. HINTERGRUND-SERVICE (Kombiniert: Bangle Standard + Custom UI Daten) ---
 function installBackgroundService() {
   const bootCode = `
-    Bangle.on('minute', function() {
-      let now = new Date();
-      if (now.getMinutes() % 10 === 0) {
-        Bangle.setHRMPower(1, "myhealth_bg");
-        let hrmTimeout = setTimeout(() => {
-          Bangle.removeListener('HRM', hrmHandler);
-          Bangle.setHRMPower(0, "myhealth_bg");
-        }, 30000);
-        let hrmHandler = function(h) {
-          if (h && h.confidence > 60) {
-            Bangle.removeListener('HRM', hrmHandler);
-            clearTimeout(hrmTimeout);
-            Bangle.setHRMPower(0, "myhealth_bg");
-            let todayStr = new Date().toISOString().split('T')[0];
-            let todayData = require("Storage").readJSON("myhealth_today.json", 1) || { date: todayStr, sum:0, count:0, min:250, max:0, steps:0, points:[] };
-            if (todayData.date !== todayStr) {
-              let log = require("Storage").readJSON("myhealth_weekly.json", 1) || [];
-              if (todayData.count > 0) {
-                log.push({date: todayData.date, min: todayData.min, max: todayData.max, avg: Math.round(todayData.sum / todayData.count), steps: todayData.steps, points: todayData.points});
-                if (log.length > 7) log.shift();
-                require("Storage").writeJSON("myhealth_weekly.json", log);
-              }
-              todayData = { date: todayStr, sum:0, count:0, min:250, max:0, steps:0, points:[] };
-            }
-            todayData.sum += h.bpm; todayData.count++;
-            todayData.min = Math.min(todayData.min, h.bpm);
-            todayData.max = Math.max(todayData.max, h.bpm);
-            if (!todayData.points) todayData.points = [];
-            todayData.points.push(h.bpm);
-            todayData.steps = Bangle.getStepCount ? Bangle.getStepCount() : 0;
-            require("Storage").writeJSON("myhealth_today.json", todayData);
+{ 
+  let settings = require("Storage").readJSON("health.json", 1) || {};
+  let hrm = settings.hrm !== undefined ? settings.hrm : 2; // 2 = 10 Minuten
+  
+  if (hrm == 1 || hrm == 2) { 
+    let onHealth = function(h) {
+      function startMeasurement() {
+        if (Bangle.isCharging() || (Bangle.getHealthStatus("last").movement<100 && Math.abs(Bangle.getAccel().z)>0.99)) return;
+        Bangle.setHRMPower(1, "health");
+        setTimeout(() => { Bangle.setHRMPower(0, "health"); }, hrm * 60000); 
+      }
+      startMeasurement();
+      if (hrm == 1) { setTimeout(startMeasurement, 200000); setTimeout(startMeasurement, 400000); }
+    }
+    Bangle.on("health", onHealth);
+    Bangle.on("HRM", (h) => {
+      if (h.confidence > 90 && Math.abs(Bangle.getHealthStatus().bpm - h.bpm) < 1) Bangle.setHRMPower(0, "health");
+    });
+    if (Bangle.getHealthStatus().bpmConfidence < 90) onHealth(); 
+  } else Bangle.setHRMPower(!!hrm, "health"); 
+
+  Bangle.on("health", health => {
+    (Bangle.getPressure?Bangle.getPressure():Promise.resolve({})).then(pressure => {
+      Object.assign(health, pressure); 
+      var d = new Date(Date.now() - 590000);
+
+      // --- OFFIZIELLE .RAW AUFZEICHNUNG & SCHRITTZIEL ---
+      if (health && health.steps > 0) {
+        var sSettings = require("Storage").readJSON("health.json",1)||{};
+        const stepsDay = Bangle.getHealthStatus("day").steps;
+        if (sSettings.stepGoalNotification && sSettings.stepGoal > 0 && stepsDay >= sSettings.stepGoal) {
+          const nowStr = new Date(Date.now()).toISOString().split('T')[0];
+          if (!sSettings.stepGoalNotificationDate || sSettings.stepGoalNotificationDate < nowStr) {
+            Bangle.buzz(200, 0.5);
+            require("notify").show({ title: sSettings.stepGoal + " Schritte", body: "Ziel erreicht!", icon: atob("DAyBABmD6BaBMAsA8BCBCBCBCA8AAA==") });
+            sSettings.stepGoalNotificationDate = nowStr;
+            require("Storage").writeJSON("health.json", sSettings);
           }
-        };
-        Bangle.on('HRM', hrmHandler);
+        }
+      }
+
+      let inf = require("health").getDecoder("HEALTH2");
+      let fn = "health-"+d.getFullYear()+"-"+(d.getMonth()+1)+".raw";
+      let rec = (145*(d.getDate()-1)) + (6*d.getHours()) + (0|(d.getMinutes()*6/60));
+      let f = require("Storage").read(fn);
+      if (!f) { require("Storage").write(fn, "HEALTH2\\0", 0, 8 + 145*31*inf.r); }
+      require("Storage").write(fn, inf.encode(health), 8+(rec*inf.r));
+
+      // --- CUSTOM DATEN FÜR DEIN DASHBOARD (myhealth_today.json) ---
+      if (health.bpm > 0) {
+        let todayStr = new Date().toISOString().split('T')[0];
+        let todayData = require("Storage").readJSON("myhealth_today.json", 1) || { date: todayStr, sum:0, count:0, min:250, max:0, steps:0, points:[] };
+        
+        if (todayData.date !== todayStr) {
+          let log = require("Storage").readJSON("myhealth_weekly.json", 1) || [];
+          if (todayData.count > 0) {
+            log.push({date: todayData.date, min: todayData.min, max: todayData.max, avg: Math.round(todayData.sum / todayData.count), steps: todayData.steps, points: todayData.points});
+            if (log.length > 7) log.shift();
+            require("Storage").writeJSON("myhealth_weekly.json", log);
+          }
+          todayData = { date: todayStr, sum:0, count:0, min:250, max:0, steps:0, points:[] };
+        }
+        
+        todayData.sum += health.bpm; todayData.count++;
+        todayData.min = Math.min(todayData.min, health.bpm);
+        todayData.max = Math.max(todayData.max, health.bpm);
+        if (!todayData.points) todayData.points = [];
+        todayData.points.push(health.bpm);
+        todayData.steps = Bangle.getStepCount ? Bangle.getStepCount() : 0;
+        require("Storage").writeJSON("myhealth_today.json", todayData);
+        print("[BG] Dashboard & Raw Daten aktualisiert. Puls: " + health.bpm);
       }
     });
+  });
+}
   `;
-  if (storage.read("myhealth.boot.js") !== bootCode) storage.write("myhealth.boot.js", bootCode);
+  if (storage.read("myhealth.boot.js") !== bootCode) {
+    storage.write("myhealth.boot.js", bootCode);
+    print("-> Profi Hintergrund-Service installiert!");
+  }
 }
 
 // --- 3. LOGIK ---
@@ -116,7 +158,6 @@ function updateStats(h) {
       activeSession.duration = Math.floor((now - startTime) / 1000);
       activeSession.steps = steps - startSteps;
       lastUpdate = now;
-      
       if (activeSession.duration > 180) {
         lastSession = activeSession;
         storage.writeJSON("myhealth_session.json", lastSession);
@@ -126,36 +167,41 @@ function updateStats(h) {
 }
 
 function exportCSV() {
-  E.showMessage("Exportiere Details...");
+  E.showMessage("Exportiere...");
   let csv = "Timestamp,Source,BPM\n";
-  
-  // 1. Letztes Training (Punkte alle 10 Sekunden)
-  if (lastSession.ts && lastSession.points && lastSession.points.length > 0) {
-    let sessionStart = lastSession.ts;
+  if (lastSession.ts && lastSession.points) {
     lastSession.points.forEach((bpm, i) => {
-      let t = new Date(sessionStart + (i * 10000)).toISOString();
+      let t = new Date(lastSession.ts + (i * 10000)).toISOString();
       csv += `${t},Training,${bpm}\n`;
     });
   }
-
-  // 2. Wochen-Log (Hintergrund-Punkte alle 10 Minuten)
   let log = storage.readJSON("myhealth_weekly.json", 1) || [];
   log.forEach(day => {
-    if (day.points && day.points.length > 0) {
+    if (day.points) {
       day.points.forEach((bpm, i) => {
-        // Wir schätzen die Zeit: Start des Tages + i * 10 Minuten
-        let dayStart = new Date(day.date).getTime();
-        let t = new Date(dayStart + (i * 600000)).toISOString();
-        csv += `${t},Daily_Background,${bpm}\n`;
+        let t = new Date(new Date(day.date).getTime() + (i * 600000)).toISOString();
+        csv += `${t},Background,${bpm}\n`;
       });
     }
   });
-
   storage.write("myhealth_full.csv", csv);
   E.showAlert("Export fertig!\nmyhealth_full.csv").then(() => openMenu());
 }
 
-// --- 4. RENDER ---
+// --- 4. RENDER HILFEN ---
+function getBGStatus() {
+  let todayData = storage.readJSON("myhealth_today.json", 1);
+  if (!todayData || !todayData.points || todayData.points.length === 0) return { text: "--:--", col: "#888" };
+  
+  let now = new Date();
+  let lastMin = Math.floor(now.getMinutes() / 10) * 10;
+  let lastTimeText = (now.getHours() < 10 ? "0" : "") + now.getHours() + ":" + (lastMin < 10 ? "0" : "") + lastMin;
+  
+  let diff = now.getMinutes() % 10;
+  let color = (diff < 5) ? "#0F0" : "#F80"; 
+  return { text: lastTimeText, col: color };
+}
+
 function drawLockIcon(x, y, color) { g.setColor(color); g.fillRect(x, y + 4, x + 10, y + 10); g.drawRect(x + 2, y, x + 8, y + 4); }
 function drawGear(x, y, r, bgCol) { g.setColor("#FFF").fillCircle(x, y, r); for(let i = 0; i < 8; i++) { let a = i * Math.PI / 4; g.fillPoly([x + Math.cos(a) * (r + 4), y + Math.sin(a) * (r + 4), x + Math.cos(a - 0.3) * r, y + Math.sin(a - 0.3) * r, x + Math.cos(a + 0.3) * r, y + Math.sin(a + 0.3) * r]); } g.setColor(bgCol).fillCircle(x, y, r * 0.45); }
 
@@ -184,16 +230,19 @@ function render() {
     });
     let diff = Math.floor((Date.now() - startTime) / 1000);
     g.setFont("Vector", 16).setColor(txtCol).setFontAlign(1, -1).drawString(Math.floor(diff/60)+":"+("0"+(diff%60)).slice(-2), w-5, 30);
-    g.setFont("Vector", 12).setColor(labCol).setFontAlign(1, -1).drawString("MAX: " + activeSession.max, w-5, 50);
   }
   
   g.setFont("Vector", 12).setColor(labCol).setFontAlign(0, -1).drawString("PULS", midX, 58);
   g.setFont("Vector", 40).setColor(txtCol).setFontAlign(0, -1).drawString(currentHR || "--", midX, 72);
   
   if (!isJogging) {
+    let bgStatus = getBGStatus();
+    g.setFont("Vector", 10).setColor(labCol).setFontAlign(0, -1).drawString("BG-CHECK:", midX - 20, 110);
+    g.setColor(bgStatus.col).drawString(bgStatus.text, midX + 25, 110);
+    
     let avg = hrHistory.length ? Math.round(hrHistory.reduce((a,b)=>a+b, 0)/hrHistory.length) : "--";
-    g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("AVG (10M)", midX, 118);
-    g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 132);
+    g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("AVG (10M)", midX, 125);
+    g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 138);
     drawGear(w - 20, 45, 10, bgColor);
   }
   
@@ -267,20 +316,11 @@ function drawDayGraphUI() {
 function openMenu() {
   currentMenuLevel = "MAIN"; isMenuOpen = true;
   let maxHROver = settings.maxHROverride > 0 ? settings.maxHROverride : (220 - settings.age);
-  
   E.showMenu({
     "": { "title": "-- SETUP --" },
-    "Alter": { 
-      value: settings.age, 
-      min: 10, max: 99, 
-      onchange: v => { settings.age = v; saveSettings(); openMenu(); } 
-    },
+    "Alter": { value: settings.age, min: 10, max: 99, onchange: v => { settings.age = v; saveSettings(); openMenu(); } },
     "Ruhepuls": { value: settings.restHR, min: 30, max: 120, onchange: v => { settings.restHR = v; saveSettings(); } },
-    "Max Puls": { 
-      value: maxHROver, 
-      min: 100, max: 230, 
-      onchange: v => { settings.maxHROverride = v; saveSettings(); openMenu(); } 
-    },
+    "Max Puls": { value: maxHROver, min: 100, max: 230, onchange: v => { settings.maxHROverride = v; saveSettings(); openMenu(); } },
     "ZONEN ÄNDERN": () => openZoneEditor(),
     "LETZTES TRAINING": () => { isMenuOpen = false; view = "GRAPH"; subView = 0; E.showMenu(); setUI(); render(); },
     "WOCHEN-LOG": () => showWeeklyLog(),
@@ -297,7 +337,7 @@ function showDayDetails(day) {
     "GRAPH ANZEIGEN": () => { isMenuOpen = false; view = "DAY_GRAPH"; E.showMenu(); setUI(); render(); },
     "Schritte": { value: "" + day.steps },
     "Puls Avg": { value: day.avg + " bpm" },
-    "ZURÜCK": () => showWeeklyLog()
+    "ZURÜCK": () => handleBack()
   });
 }
 
@@ -309,7 +349,7 @@ function showWeeklyLog() {
     let d = e.date.split('-');
     menu[`${d[2]}.${d[1]}. | ${e.steps}`] = () => showDayDetails(e);
   });
-  menu["ZURÜCK"] = () => openMenu();
+  menu["ZURÜCK"] = () => handleBack();
   E.showMenu(menu);
 }
 
@@ -321,20 +361,20 @@ function openZoneEditor() {
     menu[z.name] = { value: settings.customZones[i], min: 40, max: 220, onchange: v => { settings.customZones[i] = v; saveSettings(); } };
   });
   menu["Reset"] = () => { settings.customZones = null; saveSettings(); openZoneEditor(); };
-  menu["ZURÜCK"] = () => openMenu();
+  menu["ZURÜCK"] = () => handleBack();
   E.showMenu(menu);
 }
 
-// --- 6. LOGIK & NAVIGATION ---
+// --- 6. NAVIGATION & INIT ---
 function handleBack() {
   if (view === "DAY_GRAPH") { view = "DASHBOARD"; showWeeklyLog(); return; }
+  if (view === "GRAPH") { view = "DASHBOARD"; setUI(); render(); return; }
   if (isMenuOpen) {
-    if (currentMenuLevel === "MAIN") { isMenuOpen = false; E.showMenu(); setUI(); render(); }
+    if (currentMenuLevel === "DETAILS") showWeeklyLog();
     else if (currentMenuLevel === "WEEKLY" || currentMenuLevel === "ZONES") openMenu();
-    else if (currentMenuLevel === "DETAILS") showWeeklyLog();
+    else { isMenuOpen = false; currentMenuLevel = "NONE"; E.showMenu(); setUI(); render(); }
     return;
   }
-  if (view === "GRAPH") { view = "DASHBOARD"; setUI(); render(); return; }
   load(); 
 }
 
@@ -361,26 +401,13 @@ function setUI() {
   });
 }
 
-function checkAndArchiveDay() {
-  let todayStr = new Date().toISOString().split('T')[0];
-  let todayData = storage.readJSON("myhealth_today.json", 1);
-  if (todayData && todayData.date !== todayStr) {
-     let log = storage.readJSON("myhealth_weekly.json", 1) || [];
-     log.push(todayData);
-     if (log.length > 7) log.shift();
-     storage.writeJSON("myhealth_weekly.json", log);
-     storage.delete("myhealth_today.json");
-  }
-}
-
 setWatch(() => handleBack(), BTN1, {repeat:true, edge:"falling"});
 Bangle.on('lock', locked => { isLocked = locked; render(); });
 Bangle.on('HRM', h => { updateStats(h); if(!isMenuOpen) render(); });
 Bangle.on('step', s => { steps = s; if(!isMenuOpen) render(); });
-setInterval(() => { if (isJogging && !isMenuOpen) render(); }, 1000);
+setInterval(() => { if (!isMenuOpen) render(); }, 1000);
 
 Bangle.loadWidgets();
-checkAndArchiveDay();
 installBackgroundService();
 calculateZones();
 Bangle.setHRMPower(1, "init");
