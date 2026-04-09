@@ -235,11 +235,7 @@ function render() {
   g.setFont("Vector", 12).setColor(labCol).setFontAlign(0, -1).drawString("PULS", midX, 58);
   g.setFont("Vector", 40).setColor(txtCol).setFontAlign(0, -1).drawString(currentHR || "--", midX, 72);
   
-  if (!isJogging) {
-    let bgStatus = getBGStatus();
-    g.setFont("Vector", 10).setColor(labCol).setFontAlign(0, -1).drawString("BG-CHECK:", midX - 20, 110);
-    g.setColor(bgStatus.col).drawString(bgStatus.text, midX + 25, 110);
-    
+  if (!isJogging) {    
     let avg = hrHistory.length ? Math.round(hrHistory.reduce((a,b)=>a+b, 0)/hrHistory.length) : "--";
     g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("AVG (10M)", midX, 125);
     g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 138);
