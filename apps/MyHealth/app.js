@@ -33,7 +33,7 @@ function updateStats(h) {
   let acc = Bangle.getAccel();
   let trust = h.confidence;
   let move = acc.diff;
-  let isTable = (move < 0.0018 && (trust < 90 || h.bpm === 100));
+  let isTable = (move < 0.02 && (trust < 90 || h.bpm === 100));
 
   if (trust < 70 || isTable) return;
 
