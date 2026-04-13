@@ -209,15 +209,47 @@ function saveSettings() {
 function openMenu() {
   isMenuOpen = true;
   let maxHROver = settings.maxHROverride > 0 ? settings.maxHROverride : (220 - settings.age);
-  E.showMenu({
+  
+  let mainStats = {
     "": { "title": "-- SETUP --" },
-    "Alter": { value: settings.age, min: 10, max: 99, onchange: v => { settings.age = v; saveSettings(); openMenu(); } },
+    "Alter": { value: settings.age, min: 10, max: 99, onchange: v => { settings.age = v; saveSettings(); } },
     "Ruhepuls": { value: settings.restHR, min: 30, max: 120, onchange: v => { settings.restHR = v; saveSettings(); } },
-    "Max Puls": { value: maxHROver, min: 100, max: 230, onchange: v => { settings.maxHROverride = v; saveSettings(); openMenu(); } },
+    "Max Puls": { value: maxHROver, min: 100, max: 230, onchange: v => { settings.maxHROverride = v; saveSettings(); } },
+    "ZONEN ANPASSEN": () => showZoneMenu(), // Hier geht's zum Zonen-Setup
     "WOCHEN-LOG": () => showWeeklyLog(),
     "EXPORT CSV": () => exportCSV(),
     "ZURÜCK": () => handleBack()
+  };
+  E.showMenu(mainStats);
+}
+
+function showZoneMenu() {
+  let menu = { "": { "title": "ZONEN BPM" } };
+  
+  // Wenn noch keine benutzerdefinierten Zonen da sind, nehmen wir die berechneten als Basis
+  if (!settings.customZones) {
+    settings.customZones = calculatedZones.map(z => z.minBpm);
+  }
+
+  calculatedZones.forEach((z, i) => {
+    menu[z.name + " (min)"] = {
+      value: settings.customZones[i],
+      min: 40, max: 220,
+      onchange: v => { 
+        settings.customZones[i] = v; 
+        saveSettings(); 
+      }
+    };
   });
+
+  menu["RESET (AUTO)"] = () => {
+    settings.customZones = null;
+    saveSettings();
+    showZoneMenu();
+  };
+  
+  menu["< ZURÜCK"] = () => openMenu();
+  E.showMenu(menu);
 }
 
 function showWeeklyLog() {
