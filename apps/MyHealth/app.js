@@ -21,7 +21,8 @@ let isMenuOpen = false, lastUpdate = 0, lastZoneChange = 0;
 let selectedDay = null; // Für Health-Tages-Logs
 let selectedHistorySession = null; // Für die neue Trainings-Historie
 let zoneOverlay = null;
-let lastValidHRTime = 0; 
+let lastValidHRTime = 0;
+let minTrust = isJogging ? 60 : 80;
 
 const ZONE_DEFS = [
   { name: "Z1", min: 0.50, color: "#00FFFF" },
@@ -48,7 +49,7 @@ function updateStats(h) {
   let isTable = isCharging || (lowMovement && Math.abs(acc.z) > 0.98);
 
   // Messung verwerfen, wenn Vertrauen zu gering oder die Uhr abgelegt wurde
-  if (trust < 70 || isTable) return;
+  if (trust < minTrust || isTable) return;
 
   lastValidHRTime = Date.now();
   currentHR = h.bpm;
