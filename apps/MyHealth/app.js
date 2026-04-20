@@ -36,9 +36,18 @@ let calculatedZones = [];
 function updateStats(h) {
   let acc = Bangle.getAccel();
   let trust = h.confidence;
-  let move = acc.diff;
-  let isTable = (move < 0.02 && (trust < 90 || h.bpm === 100));
+  
+  // NEU: Tisch-Erkennung nach offiziellem System-Vorbild
+  let isCharging = Bangle.isCharging && Bangle.isCharging();
+  let healthLast = Bangle.getHealthStatus ? Bangle.getHealthStatus("last") : null;
+  // Wenn System-Health existiert, nutze dessen Movement-Wert, sonst Fallback auf acc.diff
+  let lowMovement = healthLast ? (healthLast.movement < 100) : (acc.diff < 0.02);
+  
+  // Wenn die Uhr lädt ODER (kaum Bewegung da ist UND sie flach liegt -> Z-Achse nahe 1 oder -1)
+  // 0.98 ist hier gewählt, um leichte Tisch-Unebenheiten zu tolerieren.
+  let isTable = isCharging || (lowMovement && Math.abs(acc.z) > 0.98);
 
+  // Messung verwerfen, wenn Vertrauen zu gering oder die Uhr abgelegt wurde
   if (trust < 70 || isTable) return;
 
   lastValidHRTime = Date.now();
@@ -192,7 +201,6 @@ function drawDayGraphUI() {
   if (selectedDay) {
     g.setColor("#FFF").setFont("Vector", 12).setFontAlign(0,-1).drawString("TAG: " + selectedDay.date, w/2, 35);
     
-    // NEU: Wenn an diesem Tag überhaupt nichts gesammelt wurde
     if (selectedDay.count === 0 && selectedDay.steps === 0) {
       g.setFont("Vector", 14).setColor("#AAA").setFontAlign(0,0).drawString("Keine Daten\nvorhanden", w/2, h/2);
     } else {
@@ -310,7 +318,6 @@ function showWeeklyLog() {
             if (h.steps > 0) stat.steps += h.steps;
           });
         }
-        // NEU: Der Eintrag wird nun immer dem Menü hinzugefügt!
         menu[dateStr] = () => { selectedDay = stat; view = "DAY_GRAPH"; isMenuOpen = false; E.showMenu(); setUI(); render(); };
       })(i);
     }
