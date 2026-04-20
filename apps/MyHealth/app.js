@@ -188,20 +188,29 @@ function drawDayGraphUI() {
   g.setBgColor("#000").clear();
   const w = g.getWidth(), h = g.getHeight();
   Bangle.drawWidgets();
+  
   if (selectedDay) {
     g.setColor("#FFF").setFont("Vector", 12).setFontAlign(0,-1).drawString("TAG: " + selectedDay.date, w/2, 35);
-    if (selectedDay.points && selectedDay.points.length > 1) {
-      let pts = selectedDay.points, min = selectedDay.min - 5, max = selectedDay.max + 5;
-      if(min < 0) min = 0;
-      let range = (max - min) || 1, gw = w - 40, gh = 60;
-      g.setColor("#444").drawRect(20, 70, 20 + gw, 70 + gh);
-      g.setColor("#0F0");
-      for (let i = 0; i < pts.length - 1; i++) {
-        let x1 = 20 + (i * gw / (pts.length - 1)), y1 = 70 + gh - ((pts[i] - min) * gh / range);
-        let x2 = 20 + ((i + 1) * gw / (pts.length - 1)), y2 = 70 + gh - ((pts[i+1] - min) * gh / range);
-        g.drawLine(x1, y1, x2, y2);
+    
+    // NEU: Wenn an diesem Tag überhaupt nichts gesammelt wurde
+    if (selectedDay.count === 0 && selectedDay.steps === 0) {
+      g.setFont("Vector", 14).setColor("#AAA").setFontAlign(0,0).drawString("Keine Daten\nvorhanden", w/2, h/2);
+    } else {
+      if (selectedDay.points && selectedDay.points.length > 1) {
+        let pts = selectedDay.points, min = selectedDay.min - 5, max = selectedDay.max + 5;
+        if(min < 0) min = 0;
+        let range = (max - min) || 1, gw = w - 40, gh = 60;
+        g.setColor("#444").drawRect(20, 70, 20 + gw, 70 + gh);
+        g.setColor("#0F0");
+        for (let i = 0; i < pts.length - 1; i++) {
+          let x1 = 20 + (i * gw / (pts.length - 1)), y1 = 70 + gh - ((pts[i] - min) * gh / range);
+          let x2 = 20 + ((i + 1) * gw / (pts.length - 1)), y2 = 70 + gh - ((pts[i+1] - min) * gh / range);
+          g.drawLine(x1, y1, x2, y2);
+        }
+        g.setFont("Vector", 10).setColor("#AAA").setFontAlign(0,-1).drawString("Min: " + selectedDay.min + "  Max: " + selectedDay.max, w/2, 138);
+      } else {
+        g.setFont("Vector", 12).setColor("#AAA").setFontAlign(0,0).drawString("Keine HR Daten", w/2, 100);
       }
-      g.setFont("Vector", 10).setColor("#AAA").setFontAlign(0,-1).drawString("Min: " + selectedDay.min + "  Max: " + selectedDay.max, w/2, 138);
       g.setFont("Vector", 10).setColor("#888").setFontAlign(0,-1).drawString("Schritte: " + selectedDay.steps, w/2, 150);
     }
   }
@@ -234,7 +243,7 @@ function openMenu() {
     "Alter": { value: settings.age, min: 10, max: 99, onchange: v => { settings.age = v; saveSettings(); } },
     "Ruhepuls": { value: settings.restHR, min: 30, max: 120, onchange: v => { settings.restHR = v; saveSettings(); } },
     "ZONEN BPM": () => showZoneMenu(),
-    "TRAININGS-LOG": () => showTrainingHistory(), // NEU: Trainings Historie
+    "TRAININGS-LOG": () => showTrainingHistory(),
     "TAGES-LOG": () => showWeeklyLog(),
     "EXPORT CSV": () => exportCSV(),
     "ZURÜCK": () => handleBack()
@@ -301,9 +310,8 @@ function showWeeklyLog() {
             if (h.steps > 0) stat.steps += h.steps;
           });
         }
-        if (stat.count > 0 || stat.steps > 0) {
-          menu[dateStr] = () => { selectedDay = stat; view = "DAY_GRAPH"; isMenuOpen = false; E.showMenu(); setUI(); render(); };
-        }
+        // NEU: Der Eintrag wird nun immer dem Menü hinzugefügt!
+        menu[dateStr] = () => { selectedDay = stat; view = "DAY_GRAPH"; isMenuOpen = false; E.showMenu(); setUI(); render(); };
       })(i);
     }
     menu["ZURÜCK"] = () => openMenu();
