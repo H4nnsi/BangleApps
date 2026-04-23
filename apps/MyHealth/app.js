@@ -189,7 +189,12 @@ function drawHistoryPage() {
 function drawHistoryDetailPage() {
   g.setBgColor("#000").clear();
   Bangle.drawWidgets();
-  let timeStr = new Date(selectedHistorySession.ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  
+  let d = new Date(selectedHistorySession.ts);
+  let h = d.getHours();
+  let m = ("0" + d.getMinutes()).slice(-2);
+  let timeStr = h + ":" + m;
+  
   drawGenericSession(selectedHistorySession, "LAUF UM " + timeStr);
   g.flip();
 }
