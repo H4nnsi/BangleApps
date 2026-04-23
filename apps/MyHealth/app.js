@@ -47,29 +47,39 @@ function drawSettingsIcon(x, y) {
 function updateStats(h) {
   let acc = Bangle.getAccel();
   let isCharging = Bangle.isCharging && Bangle.isCharging();
-  let isTable = isCharging || (acc.diff < 0.02 && Math.abs(acc.z) > 0.98);
+  let isStationary = acc.diff < 0.015 && (Math.abs(acc.z) > 0.95);
+  let shouldIgnore = isCharging || isStationary || h.confidence < minTrust;
 
-  if (h.confidence < minTrust || isTable) return;
+  if (shouldIgnore) return;
 
   lastValidHRTime = Date.now();
   currentHR = h.bpm;
   let now = Date.now();
-  hrHistory.push(h.bpm);
-  if (hrHistory.length > 40) hrHistory.shift();
+  
+  // Historie für Durchschnittsberechnung (nur wenn nicht Jogging)
+  if (!isJogging) {
+    hrHistory.push(h.bpm);
+    if (hrHistory.length > 40) hrHistory.shift();
+  }
   
   if (isJogging) {
     let newZone = 0;
     for (let i = calculatedZones.length - 1; i >= 0; i--) {
       if (h.bpm >= calculatedZones[i].minBpm) { newZone = i + 1; break; }
     }
+    
+    // Zonen-Wechsel Logik mit Hysterese/Delay (15 Sek), um Flattern zu vermeiden
     if (newZone !== currentZone && currentZone !== 0 && (now - lastZoneChange > 15000)) {
       if (settings.buzzOnZone) Bangle.buzz(600);
       currentZone = newZone;
       lastZoneChange = now;
       zoneOverlay = "ZONE " + newZone;
       setTimeout(() => { zoneOverlay = null; render(); }, 3000);
-    } else if (currentZone === 0) { currentZone = newZone; }
+    } else if (currentZone === 0) { 
+      currentZone = newZone; 
+    }
     
+    // Datenpunkt alle 10 Sekunden speichern
     if (now - lastUpdate > 10000) {
       activeSession.points.push(h.bpm);
       activeSession.max = Math.max(activeSession.max, h.bpm);
