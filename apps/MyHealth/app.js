@@ -47,7 +47,7 @@ function drawSettingsIcon(x, y) {
 function updateStats(h) {
   let acc = Bangle.getAccel();
   let isCharging = Bangle.isCharging && Bangle.isCharging();
-  let isStationary = acc.diff < 0.015 && (Math.abs(acc.z) > 0.95);
+  let isStationary = acc.diff < 0.05 && (Math.abs(acc.z) > 0.95);
   let shouldIgnore = isCharging || isStationary || h.confidence < minTrust;
 
   if (shouldIgnore) return;
