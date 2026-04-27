@@ -43,6 +43,63 @@ function drawSettingsIcon(x, y) {
   g.setColor("#000").fillCircle(x, y, 2);
 }
 
+// VERBESSERT: Text-Viewer mit Scroll-Funktion
+let textScrollY = 0;
+function showTextPage(title, text) {
+  textScrollY = 0; 
+  const w = g.getWidth(), h = g.getHeight();
+  const lines = g.wrapString(text, w - 15);
+  const totalContentHeight = lines.length * 18;
+  const viewHeight = h - 70; // Bereich zwischen Titel und Footer
+
+  function draw() {
+    g.setBgColor("#000").clear();
+    Bangle.drawWidgets();
+    
+    // Fixer Titel
+    g.setColor("#0FF").setFont("Vector", 16).setFontAlign(0,-1).drawString(title, w/2, 28);
+    g.setColor("#444").drawLine(0, 48, w, 48);
+
+    // Scrollbarer Text
+    g.setColor("#FFF").setFont("Vector", 14).setFontAlign(-1,-1);
+    lines.forEach((line, i) => {
+      let y = 55 + (i * 18) - textScrollY;
+      // Nur zeichnen, wenn im sichtbaren Bereich unter dem Header
+      if (y > 40 && y < h - 20) {
+        g.drawString(line, 10, y);
+      }
+    });
+
+    // Scroll-Balken (nur wenn Text länger als Display)
+    if (totalContentHeight > viewHeight) {
+      let barHeight = Math.max(10, (viewHeight / totalContentHeight) * viewHeight);
+      let barPos = 50 + (textScrollY / (totalContentHeight - viewHeight)) * (viewHeight - barHeight);
+      g.setColor("#333").fillRect(w-3, 50, w, h-20); // Hintergrund
+      g.setColor("#0FF").fillRect(w-3, barPos, w, barPos + barHeight); // Balken
+    }
+    
+    // Footer
+    g.setColor("#888").setFont("Vector", 12).setFontAlign(0, 1).drawString("Tippen für Zurück", w/2, h-2);
+    g.flip();
+  }
+
+  draw();
+
+  Bangle.setUI({
+    mode: "custom",
+    touch: () => { textScrollY = 0; showIntroMenu(); }, // Tippen geht zurück
+    swipe: (dirLR, dirUD) => {
+      if (dirUD === 1) { // Wischen nach unten -> Text nach oben
+        textScrollY = Math.max(0, textScrollY - 30);
+        draw();
+      } else if (dirUD === -1) { // Wischen nach oben -> Text nach unten
+        textScrollY = Math.min(Math.max(0, totalContentHeight - viewHeight + 10), textScrollY + 30);
+        draw();
+      }
+    }
+  });
+}
+
 // --- 3. HRM LOGIK ---
 function updateStats(h) {
   let acc = Bangle.getAccel();
@@ -56,7 +113,6 @@ function updateStats(h) {
   currentHR = h.bpm;
   let now = Date.now();
   
-  // Historie für Durchschnittsberechnung (nur wenn nicht Jogging)
   if (!isJogging) {
     hrHistory.push(h.bpm);
     if (hrHistory.length > 40) hrHistory.shift();
@@ -68,7 +124,6 @@ function updateStats(h) {
       if (h.bpm >= calculatedZones[i].minBpm) { newZone = i + 1; break; }
     }
     
-    // Zonen-Wechsel Logik mit Hysterese/Delay (15 Sek), um Flattern zu vermeiden
     if (newZone !== currentZone && currentZone !== 0 && (now - lastZoneChange > 15000)) {
       if (settings.buzzOnZone) Bangle.buzz(600);
       currentZone = newZone;
@@ -79,7 +134,6 @@ function updateStats(h) {
       currentZone = newZone; 
     }
     
-    // Datenpunkt alle 10 Sekunden speichern
     if (now - lastUpdate > 10000) {
       activeSession.points.push(h.bpm);
       activeSession.max = Math.max(activeSession.max, h.bpm);
@@ -121,8 +175,7 @@ function render() {
   g.setBgColor(bgColor).clear();
   Bangle.drawWidgets();
   
-  // Oben: Schritte & Timer
-  g.setFont("Vector", 16).setColor(isJogging ? txtCol : "#0F0").setFontAlign(-1, -1).drawString(steps, 5, 28);
+  g.setFont("Vector", 16).setColor(isJogging ? txtCol : "#0F0").setFontAlign(-1, -1).drawString("S:"+steps, 5, 28);
   
   if (isJogging) {
     const listYStart = 50, stepH = 22, listW = 48;
@@ -141,7 +194,6 @@ function render() {
     drawSettingsIcon(w - 18, 38);
   }
   
-  // Mitte: Puls
   let displayHR = (Date.now() - lastValidHRTime < 30000 && currentHR > 0) ? currentHR : "--";
   g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("PULS", midX, 55);
   g.setFont("Vector", 40).setColor(txtCol).setFontAlign(0, -1).drawString(displayHR, midX, 70);
@@ -152,7 +204,6 @@ function render() {
     g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 132);
   }
   
-  // Button
   g.setColor(isJogging ? "#000" : "#222").fillRect(15, 158, w-15, 175);
   g.setColor(isJogging ? "#FFF" : "#0FF").setFont("Vector", 16).setFontAlign(0,0).drawString(isJogging?"STOP":"START", w/2, 167);
   
@@ -261,10 +312,22 @@ function exportCSV() {
   E.showAlert("CSV gespeichert!").then(() => openMenu());
 }
 
+function showIntroMenu() {
+  E.showMenu({
+    "": { "title": "INFO & HILFE" },
+    "Was sind Zonen?": () => showTextPage("ZONEN", "Z1-Z2:\nFettverbrennung & Basis-Ausdauer.\n\nZ3-Z4:\nCardio & Tempo.\n\nZ5: Limit.\n\nRegelmaessiges Training in den niedrigen Zonen verbessert dein Herz-Kreislauf-System am nachhaltigsten."),
+    "Tipps fürs Training": () => showTextPage("TIPPS", "Anfänger: Fokus auf Z2! Du solltest dich beim Laufen noch unterhalten können.\n\nProfis: Z2 plus Z4 Intervalle.\n\nHoere immer auf deinen Koerper und mache Pausen."),
+    "Vor dem Start": () => showTextPage("VORBEREITUNG", "Gehe auf SETUP:\n1. Alter eintragen\n2. Ruhepuls eintragen\n\nZonen berechnen sich automatisch nach der Karvonen-Formel."),
+    "Bedienung": () => showTextPage("BEDIENUNG", "- Unten tippen:\n  Start / Stop\n- Oben rechts:\n  Setup & Menü\n- Links wischen:\n  Historie & Graphen\n\nIn Texten wie diesem: Wische hoch/runter zum Lesen, tippe zum Schliessen."),
+    "< ZURÜCK": () => openMenu()
+  });
+}
+
 function openMenu() {
   isMenuOpen = true;
   E.showMenu({
     "": { "title": "-- SETUP --" },
+    "EINFÜHRUNG": () => showIntroMenu(),
     "Alter": { value: settings.age, min: 10, max: 99, onchange: v => { settings.age = v; saveSettings(); } },
     "Ruhepuls": { value: settings.restHR, min: 30, max: 120, onchange: v => { settings.restHR = v; saveSettings(); } },
     "ZONEN BPM": () => showZoneMenu(),
@@ -329,12 +392,12 @@ function handleBack() {
 function setUI() {
   Bangle.setUI({
     mode: "custom",
-    swipe: (dir) => { 
+    swipe: (dirLR, dirUD) => { 
       if (isMenuOpen) return;
-      if (view === "DASHBOARD" && dir === -1 && !isJogging) { view = "GRAPH"; render(); }
-      else if ((view === "GRAPH" || view === "HISTORY_DETAIL") && dir === -1) { subView = 1; render(); }
-      else if ((view === "GRAPH" || view === "HISTORY_DETAIL") && dir === 1) { if(subView === 1){ subView = 0; render(); } else { view = "DASHBOARD"; render(); } }
-      else if (view === "DAY_GRAPH" && dir === 1) { view = "DASHBOARD"; render(); }
+      if (view === "DASHBOARD" && dirLR === -1 && !isJogging) { view = "GRAPH"; render(); }
+      else if ((view === "GRAPH" || view === "HISTORY_DETAIL") && dirLR === -1) { subView = 1; render(); }
+      else if ((view === "GRAPH" || view === "HISTORY_DETAIL") && dirLR === 1) { if(subView === 1){ subView = 0; render(); } else { view = "DASHBOARD"; render(); } }
+      else if (view === "DAY_GRAPH" && dirLR === 1) { view = "DASHBOARD"; render(); }
     },
     touch: (n, e) => {
       if (isMenuOpen) return;
