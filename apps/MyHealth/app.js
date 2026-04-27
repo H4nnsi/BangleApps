@@ -314,11 +314,40 @@ function exportCSV() {
 
 function showIntroMenu() {
   E.showMenu({
-    "": { "title": "INFO & HILFE" },
-    "Was sind Zonen?": () => showTextPage("ZONEN", "Z1-Z2:\nFettverbrennung & Basis-Ausdauer.\n\nZ3-Z4:\nCardio & Tempo.\n\nZ5: Limit.\n\nRegelmaessiges Training in den niedrigen Zonen verbessert dein Herz-Kreislauf-System am nachhaltigsten."),
-    "Tipps fürs Training": () => showTextPage("TIPPS", "Anfänger: Fokus auf Z2! Du solltest dich beim Laufen noch unterhalten können.\n\nProfis: Z2 plus Z4 Intervalle.\n\nHoere immer auf deinen Koerper und mache Pausen."),
-    "Vor dem Start": () => showTextPage("VORBEREITUNG", "Gehe auf SETUP:\n1. Alter eintragen\n2. Ruhepuls eintragen\n\nZonen berechnen sich automatisch nach der Karvonen-Formel."),
-    "Bedienung": () => showTextPage("BEDIENUNG", "- Unten tippen:\n  Start / Stop\n- Oben rechts:\n  Setup & Menü\n- Links wischen:\n  Historie & Graphen\n\nIn Texten wie diesem: Wische hoch/runter zum Lesen, tippe zum Schliessen."),
+    "": { "title": "COACH & INFO" },
+    "Herz-Zonen": () => showTextPage("DEINE ZONEN", 
+      "Z1 & Z2 (Blau/Gruen):\n" +
+      "Regeneration & Fettstoffwechsel. Hier baust du deine Basis auf. Perfekt fuer lange, entspannte Laeufe.\n\n" +
+      "Z3 (Gelb):\n" +
+      "Aerobe Fitness. Du wirst schneller und ausdauernder.\n\n" +
+      "Z4 (Orange):\n" +
+      "Tempo-Zone. Verbessert deine Kraft und Lungenkapazitaet. Hier wird es anstrengend.\n\n" +
+      "Z5 (Rot):\n" +
+      "Maximaler Effort. Nur fuer kurze Sprints!"),
+
+    "Profi-Tipps": () => showTextPage("TRAINING", 
+      "1. Die 80/20 Regel:\n" +
+      "80% deines Trainings sollte in Z1/Z2 stattfinden. Nur 20% in Z4/Z5.\n\n" +
+      "2. Der Sprech-Test:\n" +
+      "In Z2 kannst du locker ganze Saetze sprechen. Wenn du nur noch einzelne Woerter schaffst, bist du in Z4.\n\n" +
+      "3. Erholung:\n" +
+      "Muskeln wachsen in der Pause, nicht beim Sport! Gib deinem Koerper Ruhetage."),
+
+    "Setup-Hilfe": () => showTextPage("EINSTELLUNG", 
+      "Warum Alter & Ruhepuls?\n\n" +
+      "Diese App nutzt die Karvonen-Formel. Sie ist genauer als die Standard-Formel, da sie deinen individuellen Fitness-Zustand (Ruhepuls) einbezieht.\n\n" +
+      "Tipp: Messe deinen Ruhepuls morgens direkt nach dem Aufwachen fuer das beste Ergebnis."),
+
+    "Bedienung": () => showTextPage("STEUERUNG", 
+      "START/STOP:\n" +
+      "Unten auf das Display tippen.\n\n" +
+      "SCROLLEN:\n" +
+      "In diesen Texten hoch/runter wischen.\n\n" +
+      "ZURUECK:\n" +
+      "Einfach auf das Display tippen.\n\n" +
+      "MENUE:\n" +
+      "Oben rechts auf das Zahnrad tippen (im Dashboard)."),
+
     "< ZURÜCK": () => openMenu()
   });
 }
