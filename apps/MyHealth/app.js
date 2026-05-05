@@ -20,7 +20,6 @@ let selectedDay = null;
 let selectedHistorySession = null; 
 let zoneOverlay = null;
 let lastValidHRTime = 0;
-let minTrust = isJogging ? 60 : 80;
 let blinkState = false;
 
 const ZONE_DEFS = [
@@ -43,71 +42,53 @@ function drawSettingsIcon(x, y) {
   g.setColor("#000").fillCircle(x, y, 2);
 }
 
-// VERBESSERT: Text-Viewer mit Scroll-Funktion
 let textScrollY = 0;
 function showTextPage(title, text) {
   textScrollY = 0; 
   const w = g.getWidth(), h = g.getHeight();
   const lines = g.wrapString(text, w - 15);
   const totalContentHeight = lines.length * 18;
-  const viewHeight = h - 70; // Bereich zwischen Titel und Footer
+  const viewHeight = h - 70;
 
   function draw() {
     g.setBgColor("#000").clear();
     Bangle.drawWidgets();
-    
-    // Fixer Titel
     g.setColor("#0FF").setFont("Vector", 16).setFontAlign(0,-1).drawString(title, w/2, 28);
     g.setColor("#444").drawLine(0, 48, w, 48);
-
-    // Scrollbarer Text
     g.setColor("#FFF").setFont("Vector", 14).setFontAlign(-1,-1);
     lines.forEach((line, i) => {
       let y = 55 + (i * 18) - textScrollY;
-      // Nur zeichnen, wenn im sichtbaren Bereich unter dem Header
-      if (y > 40 && y < h - 20) {
-        g.drawString(line, 10, y);
-      }
+      if (y > 40 && y < h - 20) g.drawString(line, 10, y);
     });
-
-    // Scroll-Balken (nur wenn Text länger als Display)
     if (totalContentHeight > viewHeight) {
       let barHeight = Math.max(10, (viewHeight / totalContentHeight) * viewHeight);
       let barPos = 50 + (textScrollY / (totalContentHeight - viewHeight)) * (viewHeight - barHeight);
-      g.setColor("#333").fillRect(w-3, 50, w, h-20); // Hintergrund
-      g.setColor("#0FF").fillRect(w-3, barPos, w, barPos + barHeight); // Balken
+      g.setColor("#333").fillRect(w-3, 50, w, h-20);
+      g.setColor("#0FF").fillRect(w-3, barPos, w, barPos + barHeight);
     }
-    
-    // Footer
     g.setColor("#888").setFont("Vector", 12).setFontAlign(0, 1).drawString("Tippen für Zurück", w/2, h-2);
     g.flip();
   }
-
   draw();
-
   Bangle.setUI({
     mode: "custom",
-    touch: () => { textScrollY = 0; showIntroMenu(); }, // Tippen geht zurück
+    touch: () => { textScrollY = 0; showIntroMenu(); },
     swipe: (dirLR, dirUD) => {
-      if (dirUD === 1) { // Wischen nach unten -> Text nach oben
-        textScrollY = Math.max(0, textScrollY - 30);
-        draw();
-      } else if (dirUD === -1) { // Wischen nach oben -> Text nach unten
-        textScrollY = Math.min(Math.max(0, totalContentHeight - viewHeight + 10), textScrollY + 30);
-        draw();
-      }
+      if (dirUD === 1) { textScrollY = Math.max(0, textScrollY - 30); draw(); }
+      else if (dirUD === -1) { textScrollY = Math.min(Math.max(0, totalContentHeight - viewHeight + 10), textScrollY + 30); draw(); }
     }
   });
 }
 
-// --- 3. HRM LOGIK ---
+// --- 3. HRM LOGIK (OPTIMIERT FÜR HOHE INTENSITÄT) ---
 function updateStats(h) {
-  let acc = Bangle.getAccel();
   let isCharging = Bangle.isCharging && Bangle.isCharging();
-  let isStationary = acc.diff < 0.05 && (Math.abs(acc.z) > 0.95);
-  let shouldIgnore = isCharging || isStationary || h.confidence < minTrust;
+  
+  // BEIM JOGGEN: Confidence-Schwelle drastisch senken (von 60 auf 20)
+  // Im Ruhezustand lassen wir sie bei 70 für saubere Daten
+  let currentMinTrust = isJogging ? 20 : 70;
 
-  if (shouldIgnore) return;
+  if (isCharging || h.confidence < currentMinTrust) return;
 
   lastValidHRTime = Date.now();
   currentHR = h.bpm;
@@ -119,12 +100,16 @@ function updateStats(h) {
   }
   
   if (isJogging) {
+    // ECHTZEIT-PRÜFUNG: Max/Min sofort aktualisieren, nicht erst im Intervall
+    if (h.bpm > activeSession.max) activeSession.max = h.bpm;
+    if (h.bpm < activeSession.min && h.bpm > 40) activeSession.min = h.bpm;
+
     let newZone = 0;
     for (let i = calculatedZones.length - 1; i >= 0; i--) {
       if (h.bpm >= calculatedZones[i].minBpm) { newZone = i + 1; break; }
     }
     
-    if (newZone !== currentZone && currentZone !== 0 && (now - lastZoneChange > 15000)) {
+    if (newZone !== currentZone && currentZone !== 0 && (now - lastZoneChange > 10000)) {
       if (settings.buzzOnZone) Bangle.buzz(600);
       currentZone = newZone;
       lastZoneChange = now;
@@ -134,10 +119,9 @@ function updateStats(h) {
       currentZone = newZone; 
     }
     
+    // Nur das Loggen für den Graphen findet alle 10 Sek statt
     if (now - lastUpdate > 10000) {
       activeSession.points.push(h.bpm);
-      activeSession.max = Math.max(activeSession.max, h.bpm);
-      activeSession.min = Math.min(activeSession.min, h.bpm);
       activeSession.duration = Math.floor((now - startTime) / 1000);
       activeSession.steps = steps - startSteps;
       lastUpdate = now;
@@ -147,6 +131,10 @@ function updateStats(h) {
 
 function saveSessionToHistory() {
   if (activeSession.duration < 30) return;
+  // Durchschnitt aus den geloggten Punkten berechnen
+  if (activeSession.points.length > 0) {
+    activeSession.avg = Math.round(activeSession.points.reduce((a,b)=>a+b, 0) / activeSession.points.length);
+  }
   lastSession = activeSession;
   storage.writeJSON("myhealth_session.json", lastSession);
   sessionHistory.unshift(Object.assign({}, activeSession));
@@ -174,7 +162,6 @@ function render() {
   
   g.setBgColor(bgColor).clear();
   Bangle.drawWidgets();
-  
   g.setFont("Vector", 16).setColor(isJogging ? txtCol : "#0F0").setFontAlign(-1, -1).drawString("S:"+steps, 5, 28);
   
   if (isJogging) {
@@ -194,7 +181,7 @@ function render() {
     drawSettingsIcon(w - 18, 38);
   }
   
-  let displayHR = (Date.now() - lastValidHRTime < 30000 && currentHR > 0) ? currentHR : "--";
+  let displayHR = (Date.now() - lastValidHRTime < 20000 && currentHR > 0) ? currentHR : "--";
   g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("PULS", midX, 55);
   g.setFont("Vector", 40).setColor(txtCol).setFontAlign(0, -1).drawString(displayHR, midX, 70);
   
@@ -315,39 +302,9 @@ function exportCSV() {
 function showIntroMenu() {
   E.showMenu({
     "": { "title": "COACH & INFO" },
-    "Herz-Zonen": () => showTextPage("DEINE ZONEN", 
-      "Z1 & Z2 (Blau/Gruen):\n" +
-      "Regeneration & Fettstoffwechsel. Hier baust du deine Basis auf. Perfekt fuer lange, entspannte Laeufe.\n\n" +
-      "Z3 (Gelb):\n" +
-      "Aerobe Fitness. Du wirst schneller und ausdauernder.\n\n" +
-      "Z4 (Orange):\n" +
-      "Tempo-Zone. Verbessert deine Kraft und Lungenkapazitaet. Hier wird es anstrengend.\n\n" +
-      "Z5 (Rot):\n" +
-      "Maximaler Effort. Nur fuer kurze Sprints!"),
-
-    "Profi-Tipps": () => showTextPage("TRAINING", 
-      "1. Die 80/20 Regel:\n" +
-      "80% deines Trainings sollte in Z1/Z2 stattfinden. Nur 20% in Z4/Z5.\n\n" +
-      "2. Der Sprech-Test:\n" +
-      "In Z2 kannst du locker ganze Saetze sprechen. Wenn du nur noch einzelne Woerter schaffst, bist du in Z4.\n\n" +
-      "3. Erholung:\n" +
-      "Muskeln wachsen in der Pause, nicht beim Sport! Gib deinem Koerper Ruhetage."),
-
-    "Setup-Hilfe": () => showTextPage("EINSTELLUNG", 
-      "Warum Alter & Ruhepuls?\n\n" +
-      "Diese App nutzt die Karvonen-Formel. Sie ist genauer als die Standard-Formel, da sie deinen individuellen Fitness-Zustand (Ruhepuls) einbezieht.\n\n" +
-      "Tipp: Messe deinen Ruhepuls morgens direkt nach dem Aufwachen fuer das beste Ergebnis."),
-
-    "Bedienung": () => showTextPage("STEUERUNG", 
-      "START/STOP:\n" +
-      "Unten auf das Display tippen.\n\n" +
-      "SCROLLEN:\n" +
-      "In diesen Texten hoch/runter wischen.\n\n" +
-      "ZURUECK:\n" +
-      "Einfach auf das Display tippen.\n\n" +
-      "MENUE:\n" +
-      "Oben rechts auf das Zahnrad tippen (im Dashboard)."),
-
+    "Herz-Zonen": () => showTextPage("DEINE ZONEN", "Z1 & Z2: Fettstoffwechsel. Z3: Fitness. Z4: Tempo. Z5: Sprint."),
+    "Profi-Tipps": () => showTextPage("TRAINING", "80/20 Regel: 80% leicht, 20% hart trainieren."),
+    "Setup-Hilfe": () => showTextPage("EINSTELLUNG", "Ruhepuls morgens messen!"),
     "< ZURÜCK": () => openMenu()
   });
 }
@@ -433,9 +390,16 @@ function setUI() {
       if (view === "DASHBOARD" && !isJogging && e.x > 120 && e.y < 80) { openMenu(); return; }
       if (view === "DASHBOARD" && e.y > 150) {
         isJogging = !isJogging;
-        if (isJogging) { startTime = Date.now(); startSteps = steps; activeSession = { points: [], max: 0, min: 250, ts: Date.now(), duration: 0, steps: 0 }; }
-        else { saveSessionToHistory(); }
-        Bangle.buzz(100); Bangle.setHRMPower(1, "jog"); render();
+        if (isJogging) { 
+          startTime = Date.now(); 
+          startSteps = steps; 
+          activeSession = { points: [], max: 0, min: 250, ts: Date.now(), duration: 0, steps: 0 }; 
+          Bangle.setHRMPower(1, "jog");
+        } else { 
+          saveSessionToHistory(); 
+          Bangle.setHRMPower(1, "init");
+        }
+        Bangle.buzz(100); render();
       }
     }
   });
