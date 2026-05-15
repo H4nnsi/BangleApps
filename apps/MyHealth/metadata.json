@@ -1,7 +1,7 @@
 { "id": "MyHealth",
   "name": "My Health app",
   "shortName":"MyHealth",
-  "version":"0.01",
+  "version":"0.02",
   "author": "H4nnsi",
   "description": "this is my Health app",
   "src": "MyHealth.app.js",
