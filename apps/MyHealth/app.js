@@ -187,19 +187,24 @@ function render() {
   g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("PULS", midX, 55);
   g.setFont("Vector", 40).setColor(txtCol).setFontAlign(0, -1).drawString(displayHR, midX, 70);
   
-  if (isJogging) {
-    g.setColor("#000").fillRect(10, 65, w-10, 115).setColor("#FFF").drawRect(10, 65, w-10, 115);
-    let displayColor = (currentZone > 0) ? calculatedZones[currentZone-1].color : "#FFF";
-    g.setFont("Vector", 22).setFontAlign(0, 0).setColor(displayColor).drawString(zoneOverlay, w/2, 90);
+  if (!isJogging) {    
+    let avg = hrHistory.length ? Math.round(hrHistory.reduce((a,b)=>a+b, 0)/hrHistory.length) : "--";
+    g.setFont("Vector", 14).setColor("#888").setFontAlign(0, -1).drawString("AVG (10M)", midX, 118);
+    g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 132);
   }
-  
+
   g.setColor(isJogging ? "#000" : "#222").fillRect(15, 158, w-15, 175);
   g.setColor(isJogging ? "#FFF" : "#0FF").setFont("Vector", 16).setFontAlign(0,0).drawString(isJogging?"STOP":"START", w/2, 167);
   
   if (isJogging && zoneOverlay) {
-    g.setColor("#000").fillRect(10, 65, w-10, 115).setColor("#FFF").drawRect(10, 65, w-10, 115);
-    g.setFont("Vector", 22).setFontAlign(0, 0).setColor(calculatedZones[currentZone-1].color).drawString(zoneOverlay, w/2, 90);
+    g.setColor("#000").fillRect(10, 65, w-10, 115);
+    g.setColor("#FFF").drawRect(10, 65, w-10, 115);
+    
+    let displayColor = (currentZone > 0) ? calculatedZones[currentZone-1].color : "#FFF";
+    
+    g.setFont("Vector", 22).setFontAlign(0, 0).setColor(displayColor).drawString(zoneOverlay, w/2, 90);
   }
+  
   g.flip();
 }
 
