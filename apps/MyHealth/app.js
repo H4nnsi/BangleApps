@@ -104,19 +104,21 @@ function updateStats(h) {
     if (h.bpm > activeSession.max) activeSession.max = h.bpm;
     if (h.bpm < activeSession.min && h.bpm > 40) activeSession.min = h.bpm;
 
-    let newZone = 0;
+let newZone = 0;
     for (let i = calculatedZones.length - 1; i >= 0; i--) {
       if (h.bpm >= calculatedZones[i].minBpm) { newZone = i + 1; break; }
     }
     
-    if (newZone !== currentZone && currentZone !== 0 && (now - lastZoneChange > 10000)) {
-      if (settings.buzzOnZone) Bangle.buzz(600);
+    if (newZone !== currentZone && (now - lastZoneChange > 10000)) {
+      if (settings.buzzOnZone) {
+        Bangle.buzz(newZone === 0 ? 1000 : 600); 
+      }
       currentZone = newZone;
       lastZoneChange = now;
-      zoneOverlay = "ZONE " + newZone;
+      
+      zoneOverlay = (newZone === 0) ? "Zone 0" : "ZONE " + newZone;
+      
       setTimeout(() => { zoneOverlay = null; render(); }, 3000);
-    } else if (currentZone === 0) { 
-      currentZone = newZone; 
     }
     
     // Nur das Loggen für den Graphen findet alle 10 Sek statt
@@ -185,10 +187,10 @@ function render() {
   g.setFont("Vector", 14).setColor(labCol).setFontAlign(0, -1).drawString("PULS", midX, 55);
   g.setFont("Vector", 40).setColor(txtCol).setFontAlign(0, -1).drawString(displayHR, midX, 70);
   
-  if (!isJogging) {    
-    let avg = hrHistory.length ? Math.round(hrHistory.reduce((a,b)=>a+b, 0)/hrHistory.length) : "--";
-    g.setFont("Vector", 14).setColor("#888").setFontAlign(0, -1).drawString("AVG (10M)", midX, 118);
-    g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 132);
+  if (isJogging) {
+    g.setColor("#000").fillRect(10, 65, w-10, 115).setColor("#FFF").drawRect(10, 65, w-10, 115);
+    let displayColor = (currentZone > 0) ? calculatedZones[currentZone-1].color : "#FFF";
+    g.setFont("Vector", 22).setFontAlign(0, 0).setColor(displayColor).drawString(zoneOverlay, w/2, 90);
   }
   
   g.setColor(isJogging ? "#000" : "#222").fillRect(15, 158, w-15, 175);
