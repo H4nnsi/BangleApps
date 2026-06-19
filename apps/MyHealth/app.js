@@ -306,21 +306,11 @@ function exportCSV() {
   E.showAlert("CSV gespeichert!").then(() => openMenu());
 }
 
-function showIntroMenu() {
-  E.showMenu({
-    "": { "title": "COACH & INFO" },
-    "Herz-Zonen": () => showTextPage("DEINE ZONEN", "Z1 & Z2: Fettstoffwechsel. Z3: Fitness. Z4: Tempo. Z5: Sprint."),
-    "Profi-Tipps": () => showTextPage("TRAINING", "80/20 Regel: 80% leicht, 20% hart trainieren."),
-    "Setup-Hilfe": () => showTextPage("EINSTELLUNG", "Ruhepuls morgens messen!"),
-    "< ZURÜCK": () => openMenu()
-  });
-}
 
 function openMenu() {
   isMenuOpen = true;
   E.showMenu({
     "": { "title": "-- SETUP --" },
-    "EINFÜHRUNG": () => showIntroMenu(),
     "Alter": { value: settings.age, min: 10, max: 99, onchange: v => { settings.age = v; saveSettings(); } },
     "Ruhepuls": { value: settings.restHR, min: 30, max: 120, onchange: v => { settings.restHR = v; saveSettings(); } },
     "ZONEN BPM": () => showZoneMenu(),
