@@ -1,6 +1,7 @@
 const storage = require("Storage");
+let healthMod;
+try { healthMod = require("health"); } catch(e) {}
 
-// --- 1. EINSTELLUNGEN & DATEN ---
 let settings = storage.readJSON("myhealth.json", 1) || {
   age: 30, restHR: 60, maxHROverride: 0, buzzOnZone: true, customZones: null
 };
@@ -31,64 +32,21 @@ const ZONE_DEFS = [
 ];
 let calculatedZones = [];
 
-// --- 2. HILFSFUNKTIONEN ---
 function drawSettingsIcon(x, y) {
   g.setColor("#FFF");
-  for (let i=0; i<8; i++) {
-    let a = i * Math.PI/4;
-    g.drawLine(x+Math.sin(a)*5, y+Math.cos(a)*5, x+Math.sin(a)*9, y+Math.cos(a)*9);
+  for (let i = 0; i < 8; i++) {
+    let a = i * Math.PI / 4;
+    g.drawLine(x + Math.sin(a) * 5, y + Math.cos(a) * 5, x + Math.sin(a) * 9, y + Math.cos(a) * 9);
   }
   g.fillCircle(x, y, 5);
   g.setColor("#000").fillCircle(x, y, 2);
 }
 
-let textScrollY = 0;
-function showTextPage(title, text) {
-  textScrollY = 0; 
-  const w = g.getWidth(), h = g.getHeight();
-  const lines = g.wrapString(text, w - 15);
-  const totalContentHeight = lines.length * 18;
-  const viewHeight = h - 70;
-
-  function draw() {
-    g.setBgColor("#000").clear();
-    Bangle.drawWidgets();
-    g.setColor("#0FF").setFont("Vector", 16).setFontAlign(0,-1).drawString(title, w/2, 28);
-    g.setColor("#444").drawLine(0, 48, w, 48);
-    g.setColor("#FFF").setFont("Vector", 14).setFontAlign(-1,-1);
-    lines.forEach((line, i) => {
-      let y = 55 + (i * 18) - textScrollY;
-      if (y > 40 && y < h - 20) g.drawString(line, 10, y);
-    });
-    if (totalContentHeight > viewHeight) {
-      let barHeight = Math.max(10, (viewHeight / totalContentHeight) * viewHeight);
-      let barPos = 50 + (textScrollY / (totalContentHeight - viewHeight)) * (viewHeight - barHeight);
-      g.setColor("#333").fillRect(w-3, 50, w, h-20);
-      g.setColor("#0FF").fillRect(w-3, barPos, w, barPos + barHeight);
-    }
-    g.setColor("#888").setFont("Vector", 12).setFontAlign(0, 1).drawString("Tippen für Zurück", w/2, h-2);
-    g.flip();
-  }
-  draw();
-  Bangle.setUI({
-    mode: "custom",
-    touch: () => { textScrollY = 0; showIntroMenu(); },
-    swipe: (dirLR, dirUD) => {
-      if (dirUD === 1) { textScrollY = Math.max(0, textScrollY - 30); draw(); }
-      else if (dirUD === -1) { textScrollY = Math.min(Math.max(0, totalContentHeight - viewHeight + 10), textScrollY + 30); draw(); }
-    }
-  });
-}
-
-// --- 3. HRM LOGIK (OPTIMIERT FÜR HOHE INTENSITÄT) ---
 function updateStats(h) {
   let isCharging = Bangle.isCharging && Bangle.isCharging();
-  
-  // BEIM JOGGEN: Confidence-Schwelle drastisch senken (von 60 auf 20)
-  // Im Ruhezustand lassen wir sie bei 70 für saubere Daten
-  let currentMinTrust = isJogging ? 20 : 70;
+  let minTrust = isJogging ? 20 : 70;
 
-  if (isCharging || h.confidence < currentMinTrust) return;
+  if (isCharging || h.confidence < minTrust) return;
 
   lastValidHRTime = Date.now();
   currentHR = h.bpm;
@@ -97,16 +55,16 @@ function updateStats(h) {
   if (!isJogging) {
     hrHistory.push(h.bpm);
     if (hrHistory.length > 40) hrHistory.shift();
-  }
-  
-  if (isJogging) {
-    // ECHTZEIT-PRÜFUNG: Max/Min sofort aktualisieren, nicht erst im Intervall
+  } else {
     if (h.bpm > activeSession.max) activeSession.max = h.bpm;
     if (h.bpm < activeSession.min && h.bpm > 40) activeSession.min = h.bpm;
 
-let newZone = 0;
+    let newZone = 0;
     for (let i = calculatedZones.length - 1; i >= 0; i--) {
-      if (h.bpm >= calculatedZones[i].minBpm) { newZone = i + 1; break; }
+      if (h.bpm >= calculatedZones[i].minBpm) { 
+        newZone = i + 1; 
+        break; 
+      }
     }
     
     if (newZone !== currentZone && (now - lastZoneChange > 10000)) {
@@ -115,13 +73,10 @@ let newZone = 0;
       }
       currentZone = newZone;
       lastZoneChange = now;
-      
-      zoneOverlay = (newZone === 0) ? "Zone 0" : "ZONE " + newZone;
-      
+      zoneOverlay = newZone === 0 ? "Zone 0" : "ZONE " + newZone;
       setTimeout(() => { zoneOverlay = null; render(); }, 3000);
     }
     
-    // Nur das Loggen für den Graphen findet alle 10 Sek statt
     if (now - lastUpdate > 10000) {
       activeSession.points.push(h.bpm);
       activeSession.duration = Math.floor((now - startTime) / 1000);
@@ -133,9 +88,8 @@ let newZone = 0;
 
 function saveSessionToHistory() {
   if (activeSession.duration < 30) return;
-  // Durchschnitt aus den geloggten Punkten berechnen
   if (activeSession.points.length > 0) {
-    activeSession.avg = Math.round(activeSession.points.reduce((a,b)=>a+b, 0) / activeSession.points.length);
+    activeSession.avg = Math.round(activeSession.points.reduce((a, b) => a + b, 0) / activeSession.points.length);
   }
   lastSession = activeSession;
   storage.writeJSON("myhealth_session.json", lastSession);
@@ -144,27 +98,26 @@ function saveSessionToHistory() {
   storage.writeJSON("myhealth_history.json", sessionHistory);
 }
 
-// --- 4. RENDER FUNKTIONEN ---
 function render() {
   if (isMenuOpen) return;
   blinkState = !blinkState;
   
-  if (view === "DAY_GRAPH") { drawDayGraphUI(); return; }
-  if (view === "HISTORY_DETAIL") { drawHistoryDetailPage(); return; }
-  if (view === "GRAPH") { drawHistoryPage(); return; }
+  if (view === "DAY_GRAPH") return drawDayGraphUI();
+  if (view === "HISTORY_DETAIL") return drawHistoryDetailPage();
+  if (view === "GRAPH") return drawHistoryPage();
   
   const w = g.getWidth(), h = g.getHeight();
   let midX = isJogging ? (w / 2 + 22) : (w / 2);
   let bgColor = "#000", txtCol = "#FFF", labCol = isJogging ? "#333" : "#888";
   
   if (isJogging && currentZone > 0) { 
-    bgColor = calculatedZones[currentZone-1].color; 
+    bgColor = calculatedZones[currentZone - 1].color; 
     txtCol = "#000"; 
   }
   
   g.setBgColor(bgColor).clear();
   Bangle.drawWidgets();
-  g.setFont("Vector", 16).setColor(isJogging ? txtCol : "#0F0").setFontAlign(-1, -1).drawString("S:"+steps, 5, 28);
+  g.setFont("Vector", 16).setColor(isJogging ? txtCol : "#0F0").setFontAlign(-1, -1).drawString("S:" + steps, 5, 28);
   
   if (isJogging) {
     const listYStart = 50, stepH = 22, listW = 48;
@@ -174,11 +127,13 @@ function render() {
       if (currentZone === i + 1) {
         g.setColor(blinkState ? "#FFF" : "#666").fillRect(0, y, listW, y + stepH - 1);
         g.setColor("#000");
-      } else { g.setColor(z.color); }
+      } else { 
+        g.setColor(z.color); 
+      }
       g.setFont("Vector", 14).setFontAlign(-1, -1).drawString(z.name, 2, y + 3);
     });
     let diff = Math.floor((Date.now() - startTime) / 1000);
-    g.setFont("Vector", 16).setColor(txtCol).setFontAlign(1, -1).drawString(Math.floor(diff/60)+":"+("0"+(diff%60)).slice(-2), w-5, 28);
+    g.setFont("Vector", 16).setColor(txtCol).setFontAlign(1, -1).drawString(Math.floor(diff / 60) + ":" + ("0" + (diff % 60)).slice(-2), w - 5, 28);
   } else {
     drawSettingsIcon(w - 18, 38);
   }
@@ -188,21 +143,19 @@ function render() {
   g.setFont("Vector", 40).setColor(txtCol).setFontAlign(0, -1).drawString(displayHR, midX, 70);
   
   if (!isJogging) {    
-    let avg = hrHistory.length ? Math.round(hrHistory.reduce((a,b)=>a+b, 0)/hrHistory.length) : "--";
+    let avg = hrHistory.length ? Math.round(hrHistory.reduce((a, b) => a + b, 0) / hrHistory.length) : "--";
     g.setFont("Vector", 14).setColor("#888").setFontAlign(0, -1).drawString("AVG (10M)", midX, 118);
     g.setFont("Vector", 26).setColor(txtCol).setFontAlign(0, -1).drawString(avg, midX, 132);
   }
 
-  g.setColor(isJogging ? "#000" : "#222").fillRect(15, 158, w-15, 175);
-  g.setColor(isJogging ? "#FFF" : "#0FF").setFont("Vector", 16).setFontAlign(0,0).drawString(isJogging?"STOP":"START", w/2, 167);
+  g.setColor(isJogging ? "#000" : "#222").fillRect(15, 158, w - 15, 175);
+  g.setColor(isJogging ? "#FFF" : "#0FF").setFont("Vector", 16).setFontAlign(0, 0).drawString(isJogging ? "STOP" : "START", w / 2, 167);
   
   if (isJogging && zoneOverlay) {
-    g.setColor("#000").fillRect(10, 65, w-10, 115);
-    g.setColor("#FFF").drawRect(10, 65, w-10, 115);
-    
-    let displayColor = (currentZone > 0) ? calculatedZones[currentZone-1].color : "#FFF";
-    
-    g.setFont("Vector", 22).setFontAlign(0, 0).setColor(displayColor).drawString(zoneOverlay, w/2, 90);
+    g.setColor("#000").fillRect(10, 65, w - 10, 115);
+    g.setColor("#FFF").drawRect(10, 65, w - 10, 115);
+    let displayColor = (currentZone > 0) ? calculatedZones[currentZone - 1].color : "#FFF";
+    g.setFont("Vector", 22).setFontAlign(0, 0).setColor(displayColor).drawString(zoneOverlay, w / 2, 90);
   }
   
   g.flip();
@@ -212,20 +165,20 @@ function drawGenericSession(s, title) {
   const w = g.getWidth(), h = g.getHeight();
   g.setBgColor("#000").clear();
   Bangle.drawWidgets();
-  g.setColor("#0FF").setFont("Vector", 16).setFontAlign(0,-1).drawString(title, w/2, 30);
+  g.setColor("#0FF").setFont("Vector", 16).setFontAlign(0, -1).drawString(title, w / 2, 30);
 
   if (subView === 0) {
     let stats = [
-      {l: "Zeit:", v: Math.floor(s.duration/60) + "m " + (s.duration%60) + "s", c: "#FFF"},
-      {l: "Steps:", v: s.steps || "0", c: "#0F0"},
-      {l: "Max HR:", v: s.max + " bpm", c: "#F00"}
+      { l: "Zeit:", v: Math.floor(s.duration / 60) + "m " + (s.duration % 60) + "s", c: "#FFF" },
+      { l: "Steps:", v: s.steps || "0", c: "#0F0" },
+      { l: "Max HR:", v: s.max + " bpm", c: "#F00" }
     ];
     stats.forEach((item, i) => {
-      let y = 65 + i*26;
-      g.setFont("Vector", 16).setColor("#888").setFontAlign(-1,-1).drawString(item.l, 10, y);
-      g.setColor(item.c).setFont("Vector", 20).setFontAlign(1,-1).drawString(item.v, w-10, y);
+      let y = 65 + i * 26;
+      g.setFont("Vector", 16).setColor("#888").setFontAlign(-1, -1).drawString(item.l, 10, y);
+      g.setColor(item.c).setFont("Vector", 20).setFontAlign(1, -1).drawString(item.v, w - 10, y);
     });
-    g.setColor("#FFF").setFont("Vector", 15).setFontAlign(0, 1).drawString("Wische für Graph >", w/2, h-12);
+    g.setColor("#FFF").setFont("Vector", 15).setFontAlign(0, 1).drawString("Wische für Graph >", w / 2, h - 12);
   } else {
     if (s.points && s.points.length > 1) {
       let pts = s.points, min = s.min - 5, max = s.max + 5;
@@ -234,13 +187,13 @@ function drawGenericSession(s, title) {
       g.setColor("#F00");
       for (let i = 0; i < pts.length - 1; i++) {
         let x1 = 15 + (i * gw / (pts.length - 1)), y1 = 60 + gh - ((pts[i] - min) * gh / range);
-        let x2 = 15 + ((i + 1) * gw / (pts.length - 1)), y2 = 60 + gh - ((pts[i+1] - min) * gh / range);
+        let x2 = 15 + ((i + 1) * gw / (pts.length - 1)), y2 = 60 + gh - ((pts[i + 1] - min) * gh / range);
         g.drawLine(x1, y1, x2, y2);
       }
-      g.setFont("Vector", 14).setColor("#0FF").setFontAlign(-1,-1).drawString("Min:" + s.min, 15, 115);
-      g.setColor("#F00").setFontAlign(1,-1).drawString("Max:" + s.max, w-15, 115);
+      g.setFont("Vector", 14).setColor("#0FF").setFontAlign(-1, -1).drawString("Min:" + s.min, 15, 115);
+      g.setColor("#F00").setFontAlign(1, -1).drawString("Max:" + s.max, w - 15, 115);
     }
-    g.setColor("#FFF").setFont("Vector", 15).setFontAlign(0, 1).drawString("< Zurück wischen", w/2, h-12);
+    g.setColor("#FFF").setFont("Vector", 15).setFontAlign(0, 1).drawString("< Zurück wischen", w / 2, h - 12);
   }
 }
 
@@ -256,7 +209,7 @@ function drawDayGraphUI() {
   const w = g.getWidth(), h = g.getHeight();
   Bangle.drawWidgets();
   if (selectedDay) {
-    g.setColor("#FFF").setFont("Vector", 14).setFontAlign(0,-1).drawString(selectedDay.date, w/2, 30);
+    g.setColor("#FFF").setFont("Vector", 14).setFontAlign(0, -1).drawString(selectedDay.date, w / 2, 30);
     if (selectedDay.points && selectedDay.points.length > 1) {
       let pts = selectedDay.points, min = selectedDay.min - 5, max = selectedDay.max + 5;
       let range = (max - min) || 1, gw = w - 30, gh = 50;
@@ -264,17 +217,16 @@ function drawDayGraphUI() {
       g.setColor("#0F0");
       for (let i = 0; i < pts.length - 1; i++) {
         let x1 = 15 + (i * gw / (pts.length - 1)), y1 = 55 + gh - ((pts[i] - min) * gh / range);
-        let x2 = 15 + ((i + 1) * gw / (pts.length - 1)), y2 = 55 + gh - ((pts[i+1] - min) * gh / range);
+        let x2 = 15 + ((i + 1) * gw / (pts.length - 1)), y2 = 55 + gh - ((pts[i + 1] - min) * gh / range);
         g.drawLine(x1, y1, x2, y2);
       }
     }
-    g.setFont("Vector", 14).setColor("#AAA").setFontAlign(0, 0).drawString("Steps: " + selectedDay.steps, w/2, 130);
-    g.setFont("Vector", 15).setColor("#FFF").setFontAlign(0, 1).drawString("< Zurück wischen", w/2, h-12);
+    g.setFont("Vector", 14).setColor("#AAA").setFontAlign(0, 0).drawString("Steps: " + selectedDay.steps, w / 2, 130);
+    g.setFont("Vector", 15).setColor("#FFF").setFontAlign(0, 1).drawString("< Zurück wischen", w / 2, h - 12);
   }
   g.flip();
 }
 
-// --- 5. LOGIK & MENÜS ---
 function calculateZones() {
   let maxHR = (settings.maxHROverride > 0) ? settings.maxHROverride : (220 - settings.age);
   let reserve = maxHR - settings.restHR;
@@ -285,27 +237,39 @@ function calculateZones() {
   });
 }
 
-function saveSettings() { storage.writeJSON("myhealth.json", settings); calculateZones(); }
+function saveSettings() { 
+  storage.writeJSON("myhealth.json", settings); 
+  calculateZones(); 
+}
 
 function exportCSV() {
   E.showMessage("Export...");
   let csv = "Timestamp,BPM,Steps\n";
-  let healthMod; try { healthMod = require("health"); } catch(e) {}
-  if (healthMod) {
-    for(let i=6; i>=0; i--) { 
-      let d = new Date(Date.now() - i * 86400000);
-      healthMod.readDay(d, h => {
-        if (h.bpm > 0 || h.steps > 0) {
-          let t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h.hr, h.min).toISOString();
-          csv += t + "," + (h.bpm || 0) + "," + (h.steps || 0) + "\n";
-        }
-      });
-    }
+  if (!healthMod) {
+    storage.write("myhealth_full.csv", csv);
+    E.showAlert("CSV gespeichert!").then(() => openMenu());
+    return;
   }
-  storage.write("myhealth_full.csv", csv);
-  E.showAlert("CSV gespeichert!").then(() => openMenu());
-}
 
+  let days = 6;
+  function processNextDay() {
+    if (days < 0) {
+      storage.write("myhealth_full.csv", csv);
+      E.showAlert("CSV gespeichert!").then(() => openMenu());
+      return;
+    }
+    let d = new Date(Date.now() - days * 86400000);
+    healthMod.readDay(d, h => {
+      if (h.bpm > 0 || h.steps > 0) {
+        let t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h.hr, h.min).toISOString();
+        csv += t + "," + (h.bpm || 0) + "," + (h.steps || 0) + "\n";
+      }
+    });
+    days--;
+    setTimeout(processNextDay, 20);
+  }
+  processNextDay();
+}
 
 function openMenu() {
   isMenuOpen = true;
@@ -322,12 +286,23 @@ function openMenu() {
 }
 
 function showTrainingHistory() {
-  if (sessionHistory.length === 0) { E.showAlert("Keine Daten").then(() => openMenu()); return; }
+  if (sessionHistory.length === 0) { 
+    E.showAlert("Keine Daten").then(() => openMenu()); 
+    return; 
+  }
   let menu = { "": { "title": "TRAININGS" } };
-  sessionHistory.forEach((s, i) => {
+  sessionHistory.forEach((s) => {
     let d = new Date(s.ts);
-    let label = `${d.getDate()}.${d.getMonth()+1}. ${d.getHours()}:${("0"+d.getMinutes()).slice(-2)}`;
-    menu[label] = () => { selectedHistorySession = s; view = "HISTORY_DETAIL"; subView = 0; isMenuOpen = false; E.showMenu(); setUI(); render(); };
+    let label = `${d.getDate()}.${d.getMonth() + 1}. ${d.getHours()}:${("0" + d.getMinutes()).slice(-2)}`;
+    menu[label] = () => { 
+      selectedHistorySession = s; 
+      view = "HISTORY_DETAIL"; 
+      subView = 0; 
+      isMenuOpen = false; 
+      E.showMenu(); 
+      setUI(); 
+      render(); 
+    };
   });
   menu["< ZURÜCK"] = () => openMenu();
   E.showMenu(menu);
@@ -337,7 +312,12 @@ function showZoneMenu() {
   let menu = { "": { "title": "ZONEN" } };
   if (!settings.customZones) settings.customZones = calculatedZones.map(z => z.minBpm);
   calculatedZones.forEach((z, i) => {
-    menu[z.name] = { value: settings.customZones[i], min: 40, max: 200, onchange: v => { settings.customZones[i] = v; saveSettings(); } };
+    menu[z.name] = { 
+      value: settings.customZones[i], 
+      min: 40, 
+      max: 200, 
+      onchange: v => { settings.customZones[i] = v; saveSettings(); } 
+    };
   });
   menu["RESET (AUTO)"] = () => { settings.customZones = null; saveSettings(); showZoneMenu(); };
   menu["< ZURÜCK"] = () => openMenu();
@@ -348,17 +328,27 @@ function showWeeklyLog() {
   E.showMessage("Lade...");
   setTimeout(() => {
     let menu = { "": { "title": "TAGE" } };
-    let healthMod; try { healthMod = require("health"); } catch(e) {}
-    for(let i=0; i<7; i++) {
+    for (let i = 0; i < 7; i++) {
       let d = new Date(Date.now() - i * 86400000);
       let ds = d.toISOString().split('T')[0];
       menu[ds] = () => {
         let stat = { date: ds, min: 250, max: 0, steps: 0, points: [] };
-        if (healthMod) healthMod.readDay(d, h => { 
-          if(h.bpm>0){ stat.min=Math.min(stat.min, h.bpm); stat.max=Math.max(stat.max, h.bpm); stat.points.push(h.bpm); } 
-          if(h.steps>0) stat.steps += h.steps;
-        });
-        selectedDay = stat; view = "DAY_GRAPH"; isMenuOpen = false; E.showMenu(); setUI(); render();
+        if (healthMod) {
+          healthMod.readDay(d, h => { 
+            if (h.bpm > 0) { 
+              stat.min = Math.min(stat.min, h.bpm); 
+              stat.max = Math.max(stat.max, h.bpm); 
+              stat.points.push(h.bpm); 
+            } 
+            if (h.steps > 0) stat.steps += h.steps;
+          });
+        }
+        selectedDay = stat; 
+        view = "DAY_GRAPH"; 
+        isMenuOpen = false; 
+        E.showMenu(); 
+        setUI(); 
+        render();
       };
     }
     menu["ZURÜCK"] = () => openMenu();
@@ -367,19 +357,34 @@ function showWeeklyLog() {
 }
 
 function handleBack() {
-  if (view !== "DASHBOARD") { view = "DASHBOARD"; subView = 0; setUI(); render(); return; }
-  if (isMenuOpen) { isMenuOpen = false; E.showMenu(); setUI(); render(); return; }
+  if (view !== "DASHBOARD") { 
+    view = "DASHBOARD"; 
+    subView = 0; 
+    setUI(); 
+    render(); 
+    return; 
+  }
+  if (isMenuOpen) { 
+    isMenuOpen = false; 
+    E.showMenu(); 
+    setUI(); 
+    render(); 
+    return; 
+  }
   load(); 
 }
 
 function setUI() {
   Bangle.setUI({
     mode: "custom",
-    swipe: (dirLR, dirUD) => { 
+    swipe: (dirLR) => { 
       if (isMenuOpen) return;
       if (view === "DASHBOARD" && dirLR === -1 && !isJogging) { view = "GRAPH"; render(); }
       else if ((view === "GRAPH" || view === "HISTORY_DETAIL") && dirLR === -1) { subView = 1; render(); }
-      else if ((view === "GRAPH" || view === "HISTORY_DETAIL") && dirLR === 1) { if(subView === 1){ subView = 0; render(); } else { view = "DASHBOARD"; render(); } }
+      else if ((view === "GRAPH" || view === "HISTORY_DETAIL") && dirLR === 1) { 
+        if (subView === 1) { subView = 0; render(); } 
+        else { view = "DASHBOARD"; render(); } 
+      }
       else if (view === "DAY_GRAPH" && dirLR === 1) { view = "DASHBOARD"; render(); }
     },
     touch: (n, e) => {
@@ -396,17 +401,18 @@ function setUI() {
           saveSessionToHistory(); 
           Bangle.setHRMPower(1, "init");
         }
-        Bangle.buzz(100); render();
+        Bangle.buzz(100); 
+        render();
       }
     }
   });
 }
 
-// --- 6. START ---
-setWatch(() => handleBack(), BTN1, {repeat:true, edge:"falling"});
-Bangle.on('HRM', h => updateStats(h));
+setWatch(() => handleBack(), BTN1, { repeat: true, edge: "falling" });
+Bangle.on('HRM', updateStats);
 Bangle.on('step', s => steps = s);
 setInterval(() => { if (!isMenuOpen) render(); }, 1000);
+
 Bangle.loadWidgets();
 calculateZones();
 Bangle.setHRMPower(1, "init");
